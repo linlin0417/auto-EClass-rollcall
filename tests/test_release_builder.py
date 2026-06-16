@@ -11,9 +11,43 @@ from troTHU.release_builder import (
     RELEASE_NOTES_FILE,
     ReleaseBuildError,
     build_release_build_preflight,
+    package_addon_bundle,
     package_release_artifact,
     run_release_build_pipeline,
 )
+
+
+class AddonBundleTest(unittest.TestCase):
+    def test_package_addon_bundle_zips_sidecar_and_node(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            sidecar = root / "fju-ocr"
+            (sidecar / "_internal" / "ddddocr").mkdir(parents=True)
+            (sidecar / "fju-ocr.exe").write_text("exe")
+            # The add-on legitimately carries the OCR model/stack — must NOT be rejected.
+            (sidecar / "_internal" / "ddddocr" / "common_old.onnx").write_text("model")
+            node = root / "node.exe"
+            node.write_text("node")
+            artifact = root / "addons.zip"
+
+            report = package_addon_bundle(sidecar, artifact, node_exe=node)
+
+            self.assertEqual(report["status"], "ok")
+            self.assertTrue(report["node_included"])
+            with zipfile.ZipFile(artifact) as archive:
+                names = archive.namelist()
+            self.assertTrue(any(n.endswith("fju-ocr/fju-ocr.exe") for n in names))
+            self.assertTrue(any(n.endswith("/node.exe") for n in names))
+
+    def test_package_addon_bundle_rejects_secrets(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            sidecar = root / "fju-ocr"
+            sidecar.mkdir()
+            (sidecar / "fju-ocr.exe").write_text("exe")
+            (sidecar / "config.conf").write_text("secret")  # must be refused
+            with self.assertRaises(ReleaseBuildError):
+                package_addon_bundle(sidecar, root / "addons.zip", node_exe=None)
 
 
 class ReleaseBuilderTest(unittest.TestCase):
@@ -57,7 +91,7 @@ class ReleaseBuilderTest(unittest.TestCase):
         self.assertEqual(preflight["artifact"]["name"], EXPECTED_WINDOWS_ZIP)
         self.assertIn("python -m unittest discover -v", "\n".join(preflight["commands"]))
         self.assertTrue(preflight["policy"]["smoke_uses_temp_extract"])
-        self.assertIn("config.yaml", preflight["forbidden_outputs"])
+        self.assertIn("config.conf", preflight["forbidden_outputs"])
         self.assertNotIn("secret-token", encoded)
 
     def test_fake_execute_builds_zip_manifest_and_smoke(self) -> None:
@@ -82,7 +116,7 @@ class ReleaseBuilderTest(unittest.TestCase):
         self.assertTrue(any(name.endswith("README.md") for name in names))
         self.assertTrue(any(name.endswith("RELEASE_NOTES.txt") for name in names))
         self.assertIn("Ship this note.", release_notes)
-        self.assertFalse(any("/config.yaml" in name or "/state/" in name or "/tests/" in name for name in names))
+        self.assertFalse(any("/config.conf" in name or "/state/" in name or "/tests/" in name for name in names))
 
     def test_smoke_runs_from_temporary_extract_not_collect_source(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -101,7 +135,7 @@ class ReleaseBuilderTest(unittest.TestCase):
             root = Path(temp_dir)
             collect = root / "collect"
             collect.mkdir()
-            (collect / "config.yaml").write_text("unsafe", encoding="utf-8")
+            (collect / "config.conf").write_text("unsafe", encoding="utf-8")
             readme = root / "README.md"
             readme.write_text("# readme\n", encoding="utf-8")
 
@@ -112,6 +146,8 @@ class ReleaseBuilderTest(unittest.TestCase):
                     readme_path=readme,
                     notes_text="notes",
                 )
+
+
 
     def test_pipeline_fails_when_pyinstaller_is_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir, unittest.mock.patch("troTHU.release_builder._module_available", return_value=False):

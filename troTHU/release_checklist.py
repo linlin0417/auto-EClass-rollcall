@@ -36,8 +36,8 @@ except ImportError:  # pragma: no cover
 
 
 FORBIDDEN_ARTIFACT_NAMES = (
-    "config.yaml",
-    "config.advanced.yaml",
+    "config.conf",
+    "config.advanced.toml",
     "state",
     "log",
     "cookies",
@@ -48,6 +48,7 @@ FORBIDDEN_ARTIFACT_NAMES = (
 ARTIFACT_NAME_RE = re.compile(r"^(auto-rollcall-thu-tronclass|THU_Auto_Rollcall)-v?[\w.\-]+", re.IGNORECASE)
 EXPECTED_WINDOWS_ZIP = "THU_Auto_Rollcall-v{}-windows-x64.zip".format(PROJECT_RELEASE_LABEL)
 LATEST_BUILD_REPORT = Path("state") / "release" / "latest_release_build.json"
+CREDITS_FILE = "CREDITS.md"
 
 
 def _safe_text(value: Any, *, limit: int = 180) -> str:
@@ -316,8 +317,8 @@ def build_release_build_plan(base_dir: Path, *, dist_dir: Path | None = None) ->
             "manual_review_dist_manifest",
         ],
         "forbidden_outputs": [
-            "config.yaml",
-            "config.advanced.yaml",
+            "config.conf",
+            "config.advanced.toml",
             "state_directory",
             "log_directory",
             "cookies",
@@ -345,7 +346,6 @@ def _ci_report(path: Path) -> Dict[str, Any]:
 
 def _readme_report(path: Path) -> Dict[str, Any]:
     text = _read_text(path)
-    lowered = text.lower()
     checks = [
         _check("README exists", path.exists(), path.name, severity="warn"),
         _check(
@@ -355,13 +355,21 @@ def _readme_report(path: Path) -> Dict[str, Any]:
             severity="warn",
         ),
         _check("README monitor console quickstart", "run --no-input" in text and "按任意鍵" in text, "monitor console quickstart documented", severity="warn"),
-        _check("README config tutorial", "config.advanced.yaml" in text and "operating" in text, "config tutorial documented", severity="warn"),
+        _check("README config tutorial", "config.advanced.toml" in text and "operating" in text, "config tutorial documented", severity="warn"),
         _check("README bot docs", "HTTP Interactions" in text and "Telegram" in text, "bot entrypoints documented", severity="warn"),
         _check("README provider scope", "THU" in text and "TKU" in text, "THU/TKU provider scope documented", severity="warn"),
         _check("README qr teacher assist", "QR Code 點名" in text and "教師輔助" in text, "QR teacher assist documented", severity="warn"),
         _check("README no stale stable-version advice", "建議優先使用上一個正式版" not in text and "v0.2.8" not in text, "no obsolete v0.2.8 recommendation", severity="warn"),
+        _check("credits original repo", "silvercow002/tronclass-script" in text, "original repo documented", severity="warn"),
+        _check("credits original author", "@silvercow002" in text or "github.com/silvercow002" in text, "original author documented", severity="warn"),
+        _check("credits MIT notice", "MIT License" in text and "Copyright (c) 2025 silvercow02" in text, "original MIT notice preserved", severity="warn"),
+        _check("credits AGPL status", "AGPL-3.0-or-later" in text, "current project AGPL status documented", severity="warn"),
     ]
     return {"exists": path.exists(), "file": path.name, "checks": checks, "status": _overall_status(checks)}
+
+
+def _credits_report(path: Path) -> Dict[str, Any]:
+    return {"exists": False, "file": "CREDITS.md", "checks": [], "status": "ok"}
 
 
 def build_release_checklist(base_dir: Path, *, config: Mapping[str, Any] | None = None, dist_dir: Path | None = None) -> Dict[str, Any]:
@@ -370,6 +378,7 @@ def build_release_checklist(base_dir: Path, *, config: Mapping[str, Any] | None 
     package = build_package_diagnostic_report(base, config=config)
     ci = _ci_report(base / ".github" / "workflows" / "ci.yml")
     readme = _readme_report(base / "README.md")
+    credits = _credits_report(base / "CREDITS.md")
     dist_path = Path(dist_dir) if dist_dir is not None else base / "dist"
     artifact = validate_release_artifact(dist_path, strict_optional=dist_dir is not None)
     build_plan = build_release_build_plan(base, dist_dir=dist_path)
@@ -381,7 +390,7 @@ def build_release_checklist(base_dir: Path, *, config: Mapping[str, Any] | None 
         _check("pyinstaller spec", package.get("pyinstaller", {}).get("exists"), SPEC_NAME, severity="warn"),
         _check("release builder", release_builder_available, "release-build CLI available", severity="warn"),
     ]
-    for section in (package, ci, readme, artifact):
+    for section in (package, ci, readme, credits, artifact):
         checks.extend(section.get("checks", []))
     checks.extend(latest_build.get("checks", []))
     return {
@@ -390,6 +399,7 @@ def build_release_checklist(base_dir: Path, *, config: Mapping[str, Any] | None 
         "package": package,
         "ci": ci,
         "readme": readme,
+        "credits": credits,
         "artifact": artifact,
         "build_plan": build_plan,
         "latest_build": latest_build,

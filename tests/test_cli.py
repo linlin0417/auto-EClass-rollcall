@@ -166,10 +166,10 @@ class TronCliSmokeTest(unittest.TestCase):
 
         self.assertEqual(result, 0)
         payload = json.loads(outputs[0])
-        self.assertEqual({item["key"] for item in payload["providers"]}, {"thu", "tku", "tronclass"})
+        self.assertEqual({item["key"] for item in payload["providers"]}, {"thu", "fju", "tku", "tronclass", "scu"})
         self.assertFalse(payload["include_hidden"])
 
-    def test_provider_list_all_json_includes_hidden_fju(self) -> None:
+    def test_provider_list_all_json_includes_fju(self) -> None:
         outputs = []
         with patch.object(tron, "bootstrap_config"), patch("builtins.print", side_effect=outputs.append):
             result = tron.main(["provider", "list", "--all", "--json"])
@@ -177,8 +177,8 @@ class TronCliSmokeTest(unittest.TestCase):
         self.assertEqual(result, 0)
         payload = json.loads(outputs[0])
         providers = {item["key"]: item for item in payload["providers"]}
-        self.assertEqual(set(providers), {"thu", "fju", "tku", "tronclass"})
-        self.assertFalse(providers["fju"]["user_visible"])
+        self.assertEqual(set(providers), {"thu", "fju", "tku", "tronclass", "scu"})
+        self.assertTrue(providers["fju"]["user_visible"])
         self.assertTrue(providers["fju"]["capabilities"]["radar"])
         self.assertTrue(providers["tronclass"]["user_visible"])
 
@@ -190,8 +190,8 @@ class TronCliSmokeTest(unittest.TestCase):
         self.assertEqual(result, 0)
         payload = json.loads(outputs[0])
         self.assertEqual(payload["key"], "fju")
-        self.assertEqual(payload["auth_flow"], "manual_cookie_only")
-        self.assertFalse(payload["user_visible"])
+        self.assertEqual(payload["auth_flow"], "fju_ocr_captcha")
+        self.assertTrue(payload["user_visible"])
         self.assertTrue(payload["capabilities"]["radar"])
         self.assertEqual(payload["support"]["support_level"], "ready")
         self.assertTrue(payload["support"]["daily_ready"])
@@ -267,6 +267,27 @@ class TronCliSmokeTest(unittest.TestCase):
         with (
             patch.object(tron, "bootstrap_config"),
             patch.object(tron, "ensure_config_now_or_open_editor", return_value={"ok": True}),
+            patch.object(tron.time, "sleep"),
+            patch.object(tron, "app_main", new=AsyncMock()) as app_main,
+            patch("builtins.print"),
+        ):
+            result = tron.main(["run"])
+
+        self.assertEqual(result, 0)
+        app_main.assert_called_once()
+
+    def test_run_interactive_falls_through_to_monitor_when_unconfigured(self) -> None:
+        # After the one-time auto-open, a still-unconfigured config must NOT exit the
+        # program; it falls through into the monitor so the user can press any key.
+        tron.CONFIG.clear()
+        tron.CONFIG.update(tron.normalize_config({"account": {"user": "", "passwd": ""}}))
+        with (
+            patch.object(tron, "bootstrap_config"),
+            patch.object(
+                tron,
+                "ensure_config_now_or_open_editor",
+                return_value={"ok": False, "status": "still_unconfigured", "message": "尚未偵測到可用帳密"},
+            ),
             patch.object(tron.time, "sleep"),
             patch.object(tron, "app_main", new=AsyncMock()) as app_main,
             patch("builtins.print"),

@@ -1,9 +1,9 @@
 """Safe local release build runner.
 
 The builder is deliberately conservative: it only packages PyInstaller collect
-output plus public release notes/readme files, validates zip member names, and
-runs CLI smoke checks from a temporary extracted copy so generated runtime files
-cannot contaminate the artifact.
+output plus public release notes/readme/credits files, validates zip member
+names, and runs CLI smoke checks from a temporary extracted copy so generated
+runtime files cannot contaminate the artifact.
 """
 
 from __future__ import annotations
@@ -11,7 +11,6 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -31,8 +30,8 @@ except ImportError:  # pragma: no cover
 
 FORBIDDEN_RELEASE_PARTS = {
     ".codex-worklog.md",
-    "config.yaml",
-    "config.advanced.yaml",
+    "config.conf",
+    "config.advanced.toml",
     "state",
     "log",
     "cookies",
@@ -57,6 +56,14 @@ SENSITIVE_WORDS = (
 ARTIFACT_ROOT = "THU_Auto_Rollcall-v{}-windows-x64".format(PROJECT_RELEASE_LABEL)
 RELEASE_NOTES_FILE = "RELEASE_NOTES-v{}.md".format(PROJECT_RELEASE_LABEL)
 LATEST_BUILD_REPORT = Path("state") / "release" / "latest_release_build.json"
+
+# The single optional add-on bundle (this round): the OCR sidecar + Playwright
+# node driver, kept out of the lean main exe and downloaded on demand.
+SIDECAR_SPEC_NAME = "fju-ocr.spec"
+SIDECAR_NAME = "fju-ocr"
+# Short, distinct from the main program zip so users grab the right file.
+ADDON_ROOT = "addons-v{}-win".format(PROJECT_VERSION)
+ADDON_ARTIFACT = ADDON_ROOT + ".zip"
 
 
 class ReleaseBuildError(RuntimeError):
@@ -274,16 +281,26 @@ def build_release_build_preflight(
         "python -m troTHU.tron release-check --dist dist --json",
     ]
     pyinstaller_available = _module_available("PyInstaller")
+    release_notes_present = (base / RELEASE_NOTES_FILE).is_file()
+    warnings = []
+    if not pyinstaller_available:
+        warnings.append("pyinstaller_unavailable_for_execute")
+    if not release_notes_present:
+        warnings.append("missing_release_notes")
     return {
         "version": "release-build-v1",
         "project": {"name": PROJECT_NAME, "version": PROJECT_VERSION},
         "execute": False,
         "pyinstaller_available": pyinstaller_available,
+        "release_notes_present": release_notes_present,
+        "release_notes_file": RELEASE_NOTES_FILE,
+        "self_cleans_dist": True,
         "artifact": {
             "name": EXPECTED_WINDOWS_ZIP,
             "path": _rel(artifact_path, base),
             "collect_dir": _rel(collect_dir, base),
             "root": ARTIFACT_ROOT,
+            "addon_name": ADDON_ARTIFACT,
         },
         "directories": {
             "dist": dist_path.name if dist_path.parent == base else dist_path.name,
@@ -300,8 +317,8 @@ def build_release_build_preflight(
             "does_not_upload_artifact": True,
             "does_not_call_tronclass_or_bot_platforms": True,
         },
-        "status": "ok" if pyinstaller_available else "warn",
-        "warnings": [] if pyinstaller_available else ["pyinstaller_unavailable_for_execute"],
+        "status": "ok" if (pyinstaller_available and release_notes_present) else "warn",
+        "warnings": warnings,
     }
 
 
@@ -352,6 +369,73 @@ def package_release_artifact(
         "size_bytes": artifact.stat().st_size if artifact.exists() else 0,
         "sha256_short": _sha256_short(artifact),
         "member_count": file_count,
+        "validation": validation,
+        "status": "ok",
+    }
+
+
+def _ocr_stack_present() -> bool:
+    try:
+        return importlib.util.find_spec("ddddocr") is not None
+    except Exception:
+        return False
+
+
+def _build_env_node_exe() -> Path | None:
+    """The Playwright node driver in the build env (unstripped), for the add-on bundle."""
+    try:
+        import playwright
+
+        node = Path(playwright.__file__).parent / "driver" / "node.exe"
+        return node if node.is_file() else None
+    except Exception:
+        return None
+
+
+def package_addon_bundle(
+    sidecar_collect_dir: Path,
+    artifact_path: Path,
+    *,
+    node_exe: Path | None = None,
+) -> Dict[str, Any]:
+    """Zip the OCR sidecar (+ node driver) into the single add-on bundle.
+
+    The add-on legitimately carries cv2/onnxruntime/node.exe, so the lean-bundle
+    "optional extras" gate is relaxed (strict_optional=False); secrets/config/state
+    names are still rejected.
+    """
+    sidecar = Path(sidecar_collect_dir)
+    if not sidecar.exists() or not sidecar.is_dir():
+        raise ReleaseBuildError("missing_sidecar_collect_dir")
+    if _collect_forbidden_members(sidecar):
+        raise ReleaseBuildError("unsafe_sidecar_output")
+    artifact = Path(artifact_path)
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    if artifact.exists():
+        artifact.unlink()
+    count = 0
+    with zipfile.ZipFile(artifact, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for child in _iter_collect_files(sidecar):
+            relative = _rel(child, sidecar).replace("\\", "/")
+            archive.write(child, "{}/fju-ocr/{}".format(ADDON_ROOT, relative))
+            count += 1
+        if node_exe and Path(node_exe).is_file():
+            archive.write(node_exe, "{}/node.exe".format(ADDON_ROOT))
+            count += 1
+    validation = validate_release_artifact(artifact, strict_optional=False)
+    if validation.get("status") == "fail":
+        try:
+            artifact.unlink()
+        except OSError:
+            pass
+        raise ReleaseBuildError("unsafe_addon_artifact")
+    return {
+        "name": artifact.name,
+        "exists": artifact.exists(),
+        "size_bytes": artifact.stat().st_size if artifact.exists() else 0,
+        "sha256_short": _sha256_short(artifact),
+        "member_count": count,
+        "node_included": bool(node_exe and Path(node_exe).is_file()),
         "validation": validation,
         "status": "ok",
     }
@@ -430,6 +514,7 @@ def run_release_build_pipeline(
     preflight = build_release_build_preflight(base, config=config, dist_dir=dist_path)
     artifact_path = dist_path / EXPECTED_WINDOWS_ZIP
     collect_dir = dist_path / "pyinstaller" / PROJECT_NAME
+    addon_enabled = _ocr_stack_present()
     report: Dict[str, Any] = {
         "version": "release-build-v1",
         "project": {"name": PROJECT_NAME, "version": PROJECT_VERSION},
@@ -439,6 +524,12 @@ def run_release_build_pipeline(
             "name": EXPECTED_WINDOWS_ZIP,
             "path": _rel(artifact_path, base),
             "collect_dir": _rel(collect_dir, base),
+        },
+        "addon": {
+            "name": ADDON_ARTIFACT,
+            "enabled": addon_enabled,
+            "status": "dry_run" if not execute else ("pending" if addon_enabled else "skipped"),
+            "reason": "" if addon_enabled else "ocr_stack_absent",
         },
         "steps": [],
         "smoke": {},
@@ -452,6 +543,21 @@ def run_release_build_pipeline(
         report["reason"] = "pyinstaller_unavailable"
         _write_latest_build_report(base, report)
         return report
+    # Fail fast on a missing/empty release-notes file — before the long build,
+    # not after PyInstaller when packaging would discover it.
+    notes_file = base / RELEASE_NOTES_FILE
+    try:
+        notes_ok = notes_file.is_file() and bool(notes_file.read_text(encoding="utf-8").strip())
+    except OSError:
+        notes_ok = False
+    if not notes_ok:
+        report["status"] = "fail"
+        report["reason"] = "missing_release_notes"
+        _write_latest_build_report(base, report)
+        return report
+    # Self-clean: a stale dist/ makes the mid-pipeline release-check fail; start fresh.
+    shutil.rmtree(dist_path, ignore_errors=True)
+    shutil.rmtree(work_path, ignore_errors=True)
     work_path.mkdir(parents=True, exist_ok=True)
     dist_path.mkdir(parents=True, exist_ok=True)
 
@@ -477,6 +583,24 @@ def run_release_build_pipeline(
             False,
         ),
     ]
+    if addon_enabled:
+        commands.append((
+            "pyinstaller_sidecar",
+            [
+                sys.executable,
+                "-m",
+                "PyInstaller",
+                SIDECAR_SPEC_NAME,
+                "--clean",
+                "--noconfirm",
+                "--distpath",
+                str(dist_path / "pyinstaller"),
+                "--workpath",
+                str(work_path / "pyinstaller-work"),
+            ],
+            False,
+            False,
+        ))
     for name, command, allow_nonzero, require_json in commands:
         step = _run_command(
             command,
@@ -507,6 +631,18 @@ def run_release_build_pipeline(
         _write_latest_build_report(base, report)
         return report
     report["artifact"].update(packaged)
+
+    if addon_enabled:
+        try:
+            addon = package_addon_bundle(
+                dist_path / "pyinstaller" / SIDECAR_NAME,
+                dist_path / ADDON_ARTIFACT,
+                node_exe=_build_env_node_exe(),
+            )
+        except ReleaseBuildError as exc:
+            # Non-fatal: the lean main release still ships; the add-on can be rebuilt.
+            addon = {"name": ADDON_ARTIFACT, "status": "fail", "reason": str(exc)}
+        report["addon"].update(addon)
 
     try:
         smoke = _smoke_artifact(artifact_path, work_dir=work_path, base_dir=base, runner=command_runner)

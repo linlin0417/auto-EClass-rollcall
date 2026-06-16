@@ -3,7 +3,6 @@ import json
 import shutil
 import unittest
 import uuid
-from datetime import datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -79,7 +78,7 @@ class TronIntegrationTest(unittest.IsolatedAsyncioTestCase):
         return form, outcome
 
     def current_daily_log_path(self, root: Path) -> Path:
-        today = datetime.now()
+        today = tron.current_datetime()
         return root / str(today.year) / str(today.month) / "{}.jsonl".format(today.day)
 
     async def test_http_client_can_login_and_fetch_rollcalls_against_local_server(self) -> None:

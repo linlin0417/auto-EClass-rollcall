@@ -277,6 +277,18 @@ def build_webview_sync_status(config: Mapping[str, Any], *, provider: Any = None
         warnings.append("webview_cookie_import_disabled")
     if experimental and not allow_experimental_import:
         warnings.append("experimental_provider_import_disabled")
+
+    # Status is a cheap, side-effect-free snapshot — it must NOT perform network
+    # I/O. Whether imported cookies actually work is verified at import time
+    # (import_webview_cookies) and at login; here we only report, declaratively,
+    # whether such API-session validation will be required for this provider.
+    auth_flow = provider_config.get("auth_flow") or ""
+    try:
+        from troTHU.login_adapters import get_login_adapter
+        requires_validation = bool(get_login_adapter(auth_flow).requires_api_session_validation)
+    except Exception:
+        requires_validation = False
+
     return {
         "status": "ready" if can_import else "preview_only",
         "provider": str(provider_config.get("key") or DEFAULT_PROVIDER),
@@ -287,6 +299,7 @@ def build_webview_sync_status(config: Mapping[str, Any], *, provider: Any = None
         "can_import": can_import,
         "allowed_domains": list(_allowed_domains(config, provider_config)),
         "cookie_name_allowlist": list(_cookie_name_allowlist(config)),
+        "cookie_validation": "required" if requires_validation else "not_required",
         "warnings": warnings,
     }
 
@@ -377,6 +390,19 @@ def import_webview_cookies(
     _ensure_import_allowed(config, provider_config)
     if not accepted:
         raise WebViewSyncError("no_accepted_cookies")
+
+    auth_flow = provider_config.get("auth_flow") or ""
+    try:
+        from troTHU.login_adapters import get_login_adapter
+        adapter = get_login_adapter(auth_flow)
+        requires_validation = adapter.requires_api_session_validation
+    except Exception:
+        requires_validation = False
+
+    if requires_validation:
+        if not _validate_api_session(provider_config, accepted):
+            raise WebViewSyncError("api_validation_failed")
+
     path = cookie_path(Path(base_dir), profile_name)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -388,6 +414,65 @@ def import_webview_cookies(
     result["saved"] = True
     result["cookie_cache"]["updated_at"] = now
     return result
+
+
+async def validate_cookie_records(
+    provider_config: Dict[str, Any],
+    accepted_records: Sequence[WebViewCookieRecord],
+) -> bool:
+    """Async-native probe: load the given cookies into a throwaway session and
+    confirm they reach an authenticated API endpoint for this provider. Returns
+    True only if validate_login_api_session succeeds. This is the canonical
+    implementation; sync callers go through _validate_api_session."""
+    import aiohttp
+    from yarl import URL
+    from troTHU.tron_http import TronHttpClient, endpoints_from_provider
+    from troTHU.auth_runtime import validate_login_api_session
+
+    cookie_jar = aiohttp.CookieJar(unsafe=True)
+    async with aiohttp.ClientSession(cookie_jar=cookie_jar) as session:
+        for record in accepted_records:
+            domain = record.domain
+            if domain.startswith("."):
+                domain = domain[1:]
+            cookie_url = URL("https://{}/".format(domain))
+            session.cookie_jar.update_cookies({record.name: record.value}, response_url=cookie_url)
+
+        endpoints = endpoints_from_provider(provider_config)
+        client = TronHttpClient(session, endpoints=endpoints)
+        try:
+            await validate_login_api_session(client)
+            return True
+        except Exception:
+            return False
+
+
+def _validate_api_session(
+    provider_config: Dict[str, Any],
+    accepted_records: Sequence[WebViewCookieRecord],
+) -> bool:
+    """Sync bridge to validate_cookie_records. Detects an already-running event
+    loop (e.g. when called from the async app shell) and drives the coroutine in
+    a dedicated worker thread; otherwise runs it directly. The coroutine is
+    created inside the executing thread so it is never shared across threads."""
+    import asyncio
+
+    def _run() -> bool:
+        return asyncio.run(validate_cookie_records(provider_config, accepted_records))
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        try:
+            return _run()
+        except Exception:
+            return False
+    import concurrent.futures
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(_run).result()
+    except Exception:
+        return False
 
 
 def sanitize_webview_sync_value(value: Any) -> Any:

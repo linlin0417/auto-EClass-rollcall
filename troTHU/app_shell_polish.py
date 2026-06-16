@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping
+from typing import Any, Dict, List, Mapping
 
 
 POLISH_VERSION = "app-shell-polish-v1"
@@ -92,10 +92,6 @@ def _reports(reports: Mapping[str, Any] | None) -> Dict[str, Any]:
 
 
 def build_shell_action_catalog(config: Mapping[str, Any]) -> Dict[str, Any]:
-    provider_key = "thu"
-    provider = config.get("provider", {}) if isinstance(config, Mapping) else {}
-    if isinstance(provider, Mapping):
-        provider_key = str(provider.get("current") or provider.get("key") or "thu")
     actions = [
         {
             "id": "status",

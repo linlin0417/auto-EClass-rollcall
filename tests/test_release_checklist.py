@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+import unittest.mock
 import zipfile
 from pathlib import Path
 
@@ -24,12 +25,15 @@ class ReleaseChecklistTest(unittest.TestCase):
         self.assertIn("package", report)
         self.assertIn("ci", report)
         self.assertIn("readme", report)
+        self.assertIn("credits", report)
         self.assertIn("artifact", report)
         self.assertIn("build_plan", report)
         self.assertIn("release-build_execute_builds_artifacts", report["notes"])
         readme_checks = {item["name"]: item["status"] for item in report["readme"]["checks"]}
         self.assertEqual(readme_checks["README no stale stable-version advice"], "ok")
         self.assertEqual(readme_checks["README monitor console quickstart"], "ok")
+        self.assertEqual(readme_checks["credits MIT notice"], "ok")
+        self.assertEqual(readme_checks["credits AGPL status"], "ok")
         self.assertNotIn("secret-token", encoded)
 
     def test_missing_dist_is_warning_not_failure(self) -> None:
@@ -45,12 +49,12 @@ class ReleaseChecklistTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             (root / EXPECTED_WINDOWS_ZIP).write_text("placeholder", encoding="utf-8")
-            (root / "config.yaml").write_text("user: should-not-ship", encoding="utf-8")
+            (root / "config.conf").write_text("user: should-not-ship", encoding="utf-8")
             (root / "state").mkdir()
             report = validate_release_artifact(root)
 
         self.assertEqual(report["status"], "fail")
-        self.assertIn("config.yaml", report["forbidden_names"])
+        self.assertIn("config.conf", report["forbidden_names"])
         self.assertIn("state", report["forbidden_names"])
 
     def test_validate_release_artifact_inspects_zip_member_names_safely(self) -> None:
@@ -72,13 +76,13 @@ class ReleaseChecklistTest(unittest.TestCase):
             artifact = root / EXPECTED_WINDOWS_ZIP
             with zipfile.ZipFile(artifact, "w") as archive:
                 archive.writestr("THU_Auto_Rollcall.exe", "placeholder")
-                archive.writestr("_internal/playwright/driver/node.exe", "do-not-ship")
+                archive.writestr("_internal/cv2/__init__.py", "do-not-ship")
                 archive.writestr("_internal/keyring/__init__.py", "do-not-ship")
             report = validate_release_artifact(artifact)
 
         self.assertEqual(report["status"], "fail")
-        self.assertIn("playwright", report["optional_bundle_names"])
         self.assertIn("keyring", report["optional_bundle_names"])
+        self.assertIn("cv2", report["optional_bundle_names"])  # OCR stack must not be in the lean main exe
 
     def test_build_release_artifact_manifest_lists_names_hashes_and_sizes(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -100,6 +104,7 @@ class ReleaseChecklistTest(unittest.TestCase):
         self.assertFalse(plan["executes_build"])
         self.assertIn("python -m PyInstaller", "\n".join(plan["commands"]))
         self.assertIn(EXPECTED_WINDOWS_ZIP, encoded)
+        self.assertIn("README.md", encoded)
         self.assertNotIn("secret-token", encoded)
 
     def test_format_release_checklist_is_stable(self) -> None:
@@ -119,6 +124,7 @@ class ReleaseChecklistTest(unittest.TestCase):
         payload = json.loads(outputs[0])
         self.assertIn("package", payload)
         self.assertIn("ci", payload)
+        self.assertIn("credits", payload)
         self.assertIn("artifact", payload)
         self.assertIn("latest_build", payload)
 

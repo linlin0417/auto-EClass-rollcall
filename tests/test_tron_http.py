@@ -563,7 +563,7 @@ class TronOrchestrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.status, "missing_credentials")
         log_print.assert_called_once()
 
-    async def test_fju_manual_cookie_provider_skips_password_login_without_cookie(self) -> None:
+    async def test_fju_without_ocr_extra_falls_back_to_manual_cookie(self) -> None:
         session = MagicMock()
         session.cookie_jar = MagicMock()
         tron.CONFIG.clear()
@@ -577,6 +577,7 @@ class TronOrchestrationTest(unittest.IsolatedAsyncioTestCase):
         )
 
         with (
+            patch.object(tron, "ddddocr_available", return_value=False),
             patch.object(tron, "has_session_cookie", return_value=False),
             patch.object(tron, "TronHttpClient") as client_factory,
             patch.object(tron, "browser_assisted_login", AsyncMock()) as browser_login,
@@ -688,7 +689,7 @@ class TronOrchestrationTest(unittest.IsolatedAsyncioTestCase):
                     },
                     "auth": {
                         "browser_assisted_login": {
-                            "enabled": False,
+                            "enabled": True,
                             "headless": True,
                             "timeout_ms": 5000,
                         }
@@ -807,7 +808,7 @@ class TronOrchestrationTest(unittest.IsolatedAsyncioTestCase):
         session.cookie_jar = MagicMock()
         session.cookie_jar.clear = MagicMock()
         tron.CONFIG["provider"]["current"] = "tku"
-        tron.CONFIG["auth"]["browser_assisted_login"]["enabled"] = False
+        tron.CONFIG["auth"]["browser_assisted_login"]["enabled"] = True
         tron.CONFIG["account"]["user"] = "user1"
         tron.CONFIG["account"]["passwd"] = "pass1"
         client = MagicMock()
@@ -843,9 +844,9 @@ class TronOrchestrationTest(unittest.IsolatedAsyncioTestCase):
 
         status = tron.browser_assisted_login_status()
 
-        self.assertTrue(status["enabled"])
+        self.assertFalse(status["enabled"])
         self.assertFalse(status["configured_enabled"])
-        self.assertTrue(status["auto_for_provider"])
+        self.assertFalse(status["auto_for_provider"])
 
     def test_thu_browser_assisted_login_status_remains_config_opt_in(self) -> None:
         tron.CONFIG["provider"]["current"] = "thu"
@@ -998,6 +999,74 @@ class TronOrchestrationTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, "is_number")
         number_mock.assert_awaited_once_with(session, 42)
         mes_mock.assert_awaited_once()
+
+    async def test_handle_rollcall_decision_includes_gate_detail_in_number_start(self) -> None:
+        session = MagicMock()
+        announce = AsyncMock()
+        gate_detail = "簽到率已達 15.0% 門檻：點名 #42 簽到率 15.0%（3/20），啟動數字點名流程。"
+
+        with (
+            patch.object(tron, "announce_rollcall_start", announce),
+            patch.object(tron, "number", AsyncMock(return_value="1234")),
+            patch.object(tron, "submit_group_number", AsyncMock(return_value={"ok": False})),
+            patch.object(tron, "log", return_value=True),
+        ):
+            result = await tron.handle_rollcall_decision(
+                session,
+                {"status": "is_number", "rollcall": {"rollcall_id": 42, "is_number": True}, "rollcall_type": "number"},
+                gate_detail=gate_detail,
+            )
+
+        self.assertEqual(result, "is_number")
+        detail = announce.await_args.kwargs["detail"]
+        self.assertTrue(detail.startswith(gate_detail))
+        self.assertIn("正在嘗試直接讀碼", detail)
+
+    async def test_handle_rollcall_decision_includes_gate_detail_in_radar_start(self) -> None:
+        session = MagicMock()
+        announce = AsyncMock()
+        gate_detail = "簽到率已達 15.0% 門檻：點名 #43 簽到率 18.0%（9/50），啟動雷達點名流程。"
+
+        with (
+            patch.object(tron, "announce_rollcall_start", announce),
+            patch.object(tron, "radar", AsyncMock(return_value=True)),
+            patch.object(tron, "submit_group_radar", AsyncMock(return_value={"ok": False})),
+            patch.object(tron, "log", return_value=True),
+        ):
+            result = await tron.handle_rollcall_decision(
+                session,
+                {"status": "is_radar", "rollcall": {"rollcall_id": 43, "is_radar": True}, "rollcall_type": "radar"},
+                gate_detail=gate_detail,
+            )
+
+        self.assertEqual(result, "is_radar")
+        detail = announce.await_args.kwargs["detail"]
+        self.assertTrue(detail.startswith(gate_detail))
+        self.assertIn("正在處理雷達點名", detail)
+
+    async def test_handle_rollcall_decision_includes_gate_detail_in_qr_start(self) -> None:
+        session = MagicMock()
+        announce = AsyncMock()
+        gate_detail = "簽到率已達 15.0% 門檻：點名 #77 簽到率 20.0%（2/10），啟動QR 點名流程。"
+
+        with (
+            patch.object(tron, "announce_rollcall_start", announce),
+            patch.object(tron, "teacher_assist_configured", return_value=True),
+            patch.object(tron, "submit_prepared_teacher_qr", AsyncMock(return_value=True)),
+            patch.object(tron, "log", return_value=True),
+        ):
+            result = await tron.handle_rollcall_decision(
+                session,
+                {"status": "unsupported_qrcode", "rollcall": {"rollcall_id": "77", "is_qrcode": True}, "rollcall_type": "qrcode"},
+                use_prepared_qr=True,
+                gate_detail=gate_detail,
+            )
+
+        self.assertEqual(result, "is_qrcode")
+        detail = announce.await_args.kwargs["detail"]
+        self.assertTrue(detail.startswith(gate_detail))
+        self.assertIn("正在送出 QR 點名", detail)
+        self.assertEqual(announce.await_args.kwargs["event"], "qrcode_rollcall_submit_started")
 
     async def test_check_rollcall_skips_number_rollcall_after_successful_attempt(self) -> None:
         session = MagicMock()
@@ -1675,7 +1744,13 @@ class TronMonitorLoopTest(unittest.IsolatedAsyncioTestCase):
         session = MagicMock()
         session.cookie_jar = MagicMock()
         shutdown_event = asyncio.Event()
-        handle = AsyncMock(return_value="is_number")
+        detail_seen_before_handle = []
+
+        async def fake_handle(*_args, **_kwargs):
+            detail_seen_before_handle.append(tron.MONITOR_STATUS.get("detail"))
+            return "is_number"
+
+        handle = AsyncMock(side_effect=fake_handle)
 
         async def fake_sleep(_event, _seconds):
             shutdown_event.set()
@@ -1701,12 +1776,105 @@ class TronMonitorLoopTest(unittest.IsolatedAsyncioTestCase):
             patch.object(tron, "get_schedule_for_day", return_value={"enable": True, "range": ["00:00", "23:59"]}),
             patch.object(tron, "parse_schedule_range", return_value=(dt_time(0, 0), dt_time(23, 59))),
             patch.object(tron, "sleep_or_shutdown", AsyncMock(side_effect=fake_sleep)),
+            patch.object(tron, "status_print") as status_print,
             patch.object(tron, "log_print"),
             patch.object(tron, "mes", AsyncMock()),
         ):
             await tron.monitor_loop(session, shutdown_event)
 
         handle.assert_awaited_once()
+        self.assertEqual(detail_seen_before_handle, ["點名 #42 簽到率 15.0%（3/20）"])
+        self.assertTrue(
+            any("點名 #42 簽到率 15.0%（3/20）" in call.args[0] for call in status_print.call_args_list if call.args)
+        )
+
+    async def test_monitor_loop_logs_final_attendance_rate_once_after_rollcall_closes(self) -> None:
+        session = MagicMock()
+        session.cookie_jar = MagicMock()
+        shutdown_event = asyncio.Event()
+        poll_count = 0
+        progress_count = 0
+        log_print = None
+
+        async def fake_poll(_session, _cnt):
+            nonlocal poll_count
+            poll_count += 1
+            if poll_count == 1:
+                return {"status": "is_number", "rollcall": {"rollcall_id": "42", "is_number": True}, "rollcall_type": "number", "message": ""}
+            return {"status": "not_call", "rollcall": None, "rollcall_type": "", "message": ""}
+
+        async def fake_handle(*_args, **_kwargs):
+            tron.LAST_ROLLCALL_PROGRESS.clear()
+            tron.LAST_ROLLCALL_PROGRESS.update(
+                {
+                    "rollcall_id": "42",
+                    "progress": {
+                        "ok": True,
+                        "rollcall_id": "42",
+                        "total": 20,
+                        "present": 4,
+                        "present_rate_known": True,
+                        "present_rate_percent": 20.0,
+                        "attendance_rate_text": "點名 #42 簽到率 20.0%（4/20）",
+                    },
+                }
+            )
+            self.assertFalse(
+                any(call.args and str(call.args[0]).startswith("最後點名率：") for call in log_print.call_args_list)
+            )
+            return "is_number"
+
+        async def fake_sleep(_event, _seconds):
+            if poll_count >= 2:
+                shutdown_event.set()
+
+        async def fake_progress(_session, _rollcall_id):
+            nonlocal progress_count
+            progress_count += 1
+            if progress_count == 1:
+                return {
+                    "ok": True,
+                    "rollcall_id": "42",
+                    "total": 20,
+                    "present": 3,
+                    "present_rate_known": True,
+                    "present_rate_percent": 15.0,
+                    "attendance_rate_text": "點名 #42 簽到率 15.0%（3/20）",
+                    "monitor_status": "",
+                }
+            return {
+                "ok": True,
+                "rollcall_id": "42",
+                "total": 20,
+                "present": 5,
+                "present_rate_known": True,
+                "present_rate_percent": 25.0,
+                "attendance_rate_text": "點名 #42 簽到率 25.0%（5/20）",
+                "monitor_status": "",
+            }
+
+        with (
+            patch.object(tron, "login", AsyncMock(return_value=make_login_result("success"))),
+            patch.object(tron, "has_session_cookie", return_value=True),
+            patch.object(tron, "poll_rollcall_decision", AsyncMock(side_effect=fake_poll)),
+            patch.object(tron, "handle_rollcall_decision", AsyncMock(side_effect=fake_handle)),
+            patch("troTHU.monitor_runtime._fetch_monitor_rollcall_progress", AsyncMock(side_effect=fake_progress)),
+            patch.object(tron, "get_schedule_for_day", return_value={"enable": True, "range": ["00:00", "23:59"]}),
+            patch.object(tron, "parse_schedule_range", return_value=(dt_time(0, 0), dt_time(23, 59))),
+            patch.object(tron, "sleep_or_shutdown", AsyncMock(side_effect=fake_sleep)),
+            patch.object(tron, "status_print"),
+            patch.object(tron, "log_print") as patched_log_print,
+            patch.object(tron, "mes", AsyncMock()),
+        ):
+            log_print = patched_log_print
+            await tron.monitor_loop(session, shutdown_event)
+
+        final_lines = [
+            call.args[0]
+            for call in log_print.call_args_list
+            if call.args and str(call.args[0]).startswith("最後點名率：")
+        ]
+        self.assertEqual(final_lines, ["最後點名率：點名 #42 簽到率 25.0%（5/20）"])
 
     async def test_monitor_loop_ignore_gate_starts_with_unknown_rate(self) -> None:
         session = MagicMock()
@@ -1917,7 +2085,7 @@ class TronMonitorLoopTest(unittest.IsolatedAsyncioTestCase):
             for call in status_print.call_args_list
             if "偵測到尚未登入" in call.args[0]
         ]
-        self.assertEqual(manual_notices, ["偵測到尚未登入。請按任意鍵編輯 config.yaml，填好帳號密碼後關閉記事本。"])
+        self.assertEqual(manual_notices, ["偵測到尚未登入。請按任意鍵編輯 config.conf，填好帳號密碼後關閉記事本。"])
 
     async def test_monitor_loop_auto_reauths_when_cookie_disappears_after_success(self) -> None:
         session = MagicMock()
@@ -1990,7 +2158,7 @@ class TronMonitorLoopTest(unittest.IsolatedAsyncioTestCase):
                 patch.object(tron.sys.stdout, "write") as write_mock,
                 patch.object(tron.sys.stdout, "flush") as flush_mock,
             ):
-                tron.status_print("尚未登入 (請按任意鍵開啟 config.yaml)")
+                tron.status_print("尚未登入 (請按任意鍵開啟 config.conf)")
                 tron.log_print("背景訊息")
                 tron.PROMPT_INPUT_ACTIVE = False
                 tron.flush_console_output()
@@ -1999,7 +2167,7 @@ class TronMonitorLoopTest(unittest.IsolatedAsyncioTestCase):
             tron.CONSOLE_DEFERRED_LINES[:] = previous_deferred
 
         self.assertEqual(tron.CONSOLE_DEFERRED_LINES, previous_deferred)
-        self.assertEqual(write_mock.call_args_list[0].args[0], "[監控] 尚未登入 (請按任意鍵開啟 config.yaml)\n")
+        self.assertEqual(write_mock.call_args_list[0].args[0], "[監控] 尚未登入 (請按任意鍵開啟 config.conf)\n")
         self.assertEqual(write_mock.call_args_list[1].args[0], "背景訊息\n")
         self.assertEqual(flush_mock.call_count, 3)
 
@@ -2300,7 +2468,7 @@ class TronNumberRollcallTest(unittest.IsolatedAsyncioTestCase):
             patch.object(tron, "status_print") as status_print,
             patch.object(tron, "log_print") as log_print,
             patch.object(tron, "log", return_value=True),
-            patch.object(tron, "verify_rollcall_on_call_fine", AsyncMock(return_value={"ok": True, "status": "on_call_fine", "rollcall_id": "42", "monitor_detail": "點名 #42 進度：已簽到 1/1 人", "monitor_status": "on_call_fine"})),
+            patch.object(tron, "verify_rollcall_on_call_fine", AsyncMock(return_value={"ok": True, "status": "on_call_fine", "rollcall_id": "42", "monitor_detail": "點名 #42 進度：已簽到 1/1 人", "monitor_status": "on_call_fine", "progress": {"ok": True, "total": 20, "present": 4, "present_rate_known": True, "present_rate_percent": 20.0}})),
             patch.object(tron, "NUMBER_CODE_LIMIT", 2),
             patch.object(tron, "NUMBER_WORKER_COUNT", 1),
             patch.object(tron, "random_ua", return_value="ua"),
@@ -2314,8 +2482,15 @@ class TronNumberRollcallTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             any("Code: 0001" in call.args[0] for call in log_print.call_args_list)
         )
+        self.assertTrue(
+            any("Rate: 20.0% (4/20)" in call.args[0] for call in log_print.call_args_list)
+        )
         self.assertIn(
             "Code: 0001",
+            mes_mock.await_args_list[0].kwargs["highlight_block"],
+        )
+        self.assertIn(
+            "Rate: 20.0% (4/20)",
             mes_mock.await_args_list[0].kwargs["highlight_block"],
         )
 
@@ -2346,6 +2521,123 @@ class TronNumberRollcallTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(found, "NA")
         banner.assert_not_called()
+
+
+FJU_FAIL_FORM_HTML = (
+    '<form id="fm1" action="/cas/login;jsessionid=B?service=x" method="post">'
+    '<input name="username" value="">'
+    '<input name="password" value="">'
+    '<input name="captcha" value="">'
+    '<input type="hidden" name="lt" value="LT-2">'
+    '<input type="hidden" name="execution" value="e1s1">'
+    '<input type="hidden" name="_eventId" value="submit">'
+    "</form>"
+)
+
+
+class FjuOcrLoginAdapterTest(unittest.IsolatedAsyncioTestCase):
+    def _client(self, session):
+        endpoints = tron_http.TronHttpEndpoints(
+            base_url="https://elearn2.fju.edu.tw",
+            login_url="https://elearn2.fju.edu.tw/login",
+            session_cookie_domain="elearn2.fju.edu.tw",
+            auth_flow="fju_ocr_captcha",
+        )
+        return tron_http.TronHttpClient(session, endpoints=endpoints)
+
+    def _form(self):
+        return tron_http.LoginForm(
+            action_url="https://elearn2.fju.edu.tw/cas/login;jsessionid=A?service=x",
+            fields={
+                "username": "",
+                "password": "",
+                "captcha": "",
+                "lt": "LT-1",
+                "execution": "e1s1",
+                "_eventId": "submit",
+            },
+        )
+
+    async def test_retries_captcha_then_succeeds(self) -> None:
+        from troTHU.login_adapters import FjuOcrLoginAdapter
+        import troTHU.ocr_captcha as ocr_captcha
+
+        session = MagicMock()
+        captcha = make_response(status=200)
+        captcha.read = AsyncMock(return_value=b"\xff\xd8\xffjpeg")
+        session.get = MagicMock(return_value=make_context_manager(captcha))
+        fail = make_response(status=200, url="https://elearn2.fju.edu.tw/cas/login", text=FJU_FAIL_FORM_HTML)
+        ok = make_response(status=200, url="https://elearn2.fju.edu.tw/")
+        session.post = MagicMock(side_effect=[make_context_manager(fail), make_context_manager(ok)])
+        client = self._client(session)
+
+        with (
+            patch.object(ocr_captcha, "ddddocr_available", return_value=True),
+            patch.object(ocr_captcha, "solve_captcha", side_effect=["9999", "1234"]),
+            patch.object(tron_http, "has_session_cookie", side_effect=[False, True]),
+        ):
+            outcome = await FjuOcrLoginAdapter().submit_login(client, self._form(), "u", "p")
+
+        self.assertTrue(outcome.has_session)
+        self.assertEqual(session.post.call_count, 2)
+        second_post_data = session.post.call_args_list[1].kwargs["data"]
+        self.assertEqual(second_post_data["captcha"], "1234")
+        self.assertEqual(second_post_data["lt"], "LT-2")  # used the fresh ticket from the failed response
+
+    async def test_raises_changed_page_when_ddddocr_unavailable(self) -> None:
+        from troTHU.login_adapters import FjuOcrLoginAdapter
+        import troTHU.ocr_captcha as ocr_captcha
+
+        session = MagicMock()
+        client = self._client(session)
+        with patch.object(ocr_captcha, "ddddocr_available", return_value=False):
+            with self.assertRaises(tron_http.LoginPageChangedError):
+                await FjuOcrLoginAdapter().submit_login(client, self._form(), "u", "p")
+        session.post.assert_not_called()
+
+    async def test_rejects_after_exhausting_attempts(self) -> None:
+        from troTHU.login_adapters import FjuOcrLoginAdapter
+        import troTHU.ocr_captcha as ocr_captcha
+
+        session = MagicMock()
+        captcha = make_response(status=200)
+        captcha.read = AsyncMock(return_value=b"jpeg")
+        session.get = MagicMock(return_value=make_context_manager(captcha))
+        fail = make_response(status=200, url="https://elearn2.fju.edu.tw/cas/login", text=FJU_FAIL_FORM_HTML)
+        session.post = MagicMock(return_value=make_context_manager(fail))
+        client = self._client(session)
+
+        with (
+            patch.object(ocr_captcha, "ddddocr_available", return_value=True),
+            patch.object(ocr_captcha, "solve_captcha", return_value="0000"),
+            patch.object(tron_http, "has_session_cookie", return_value=False),
+        ):
+            with self.assertRaises(tron_http.LoginRejectedError):
+                await FjuOcrLoginAdapter().submit_login(client, self._form(), "u", "p")
+        self.assertEqual(session.post.call_count, tron_http.FJU_MAX_CAPTCHA_ATTEMPTS)
+
+    async def test_low_confidence_read_is_retried_without_posting(self) -> None:
+        from troTHU.login_adapters import FjuOcrLoginAdapter
+        import troTHU.ocr_captcha as ocr_captcha
+
+        session = MagicMock()
+        captcha = make_response(status=200)
+        captcha.read = AsyncMock(return_value=b"jpeg")
+        session.get = MagicMock(return_value=make_context_manager(captcha))
+        ok = make_response(status=200, url="https://elearn2.fju.edu.tw/")
+        session.post = MagicMock(return_value=make_context_manager(ok))
+        client = self._client(session)
+
+        with (
+            patch.object(ocr_captcha, "ddddocr_available", return_value=True),
+            patch.object(ocr_captcha, "solve_captcha", side_effect=["12", "1234"]),
+            patch.object(tron_http, "has_session_cookie", return_value=True),
+        ):
+            outcome = await FjuOcrLoginAdapter().submit_login(client, self._form(), "u", "p")
+
+        self.assertTrue(outcome.has_session)
+        self.assertEqual(session.post.call_count, 1)  # the too-short read never POSTed
+        self.assertEqual(session.get.call_count, 2)  # but it did fetch a fresh captcha
 
 
 if __name__ == "__main__":

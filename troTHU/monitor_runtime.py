@@ -80,6 +80,89 @@ def _format_monitor_legacy_detail(detail: ctx.Any, rollcall_status: ctx.Any) -> 
     return '{} · {}'.format(detail_text, status_text)
 
 
+def _rollcall_flow_label(rollcall_type: ctx.Any) -> str:
+    rollcall_type_text = ctx.normalize_text(rollcall_type)
+    return {
+        'number': '數字點名流程',
+        'radar': '雷達點名流程',
+        'qrcode': 'QR 點名流程',
+    }.get(rollcall_type_text, '點名流程')
+
+
+def _format_gate_start_detail(
+    rollcall_id: ctx.Any,
+    rollcall_type: ctx.Any,
+    progress: ctx.Mapping[str, ctx.Any],
+    *,
+    ignore_gate: bool=False,
+) -> str:
+    flow_label = _rollcall_flow_label(rollcall_type)
+    if ignore_gate:
+        return '已忽略 15% 門檻，啟動{}。'.format(flow_label)
+    if isinstance(progress, dict) and progress.get('ok'):
+        rate_text = progress.get('attendance_rate_text') or ctx.format_attendance_rate_text(rollcall_id, progress)
+        return '簽到率已達 {:.1f}% 門檻：{}，啟動{}。'.format(
+            ATTENDANCE_RATE_GATE_PERCENT,
+            rate_text,
+            flow_label,
+        )
+    return ''
+
+
+def _attendance_rate_text_from_progress(rollcall_id: ctx.Any, progress: ctx.Any) -> str:
+    if not isinstance(progress, dict):
+        return ''
+    text = ctx.normalize_text(progress.get('attendance_rate_text'))
+    if text:
+        return text
+    if progress.get('ok'):
+        return ctx.format_attendance_rate_text(rollcall_id, progress)
+    return ''
+
+
+def _final_attendance_rate_text(rollcall_id: ctx.Any, fallback_progress: ctx.Any) -> str:
+    rollcall_key = ctx.normalize_text(rollcall_id)
+    text = _attendance_rate_text_from_progress(rollcall_id, fallback_progress)
+    if text:
+        return text
+    last_progress_state = ctx.LAST_ROLLCALL_PROGRESS if isinstance(ctx.LAST_ROLLCALL_PROGRESS, dict) else {}
+    last_progress = last_progress_state.get('progress') if isinstance(last_progress_state.get('progress'), dict) else {}
+    last_rollcall_id = ctx.normalize_text(last_progress_state.get('rollcall_id') or last_progress.get('rollcall_id'))
+    if last_progress and (not rollcall_key or not last_rollcall_id or last_rollcall_id == rollcall_key):
+        text = _attendance_rate_text_from_progress(rollcall_id, last_progress)
+        if text:
+            return text
+    return ''
+
+
+async def _log_final_attendance_rate_on_close(
+    session: ctx.Any,
+    rollcall_id: ctx.Any,
+    rollcall_type: ctx.Any,
+    *,
+    counter: int,
+    logged_keys: set[str],
+) -> None:
+    rollcall_key = ctx.normalize_text(rollcall_id)
+    if not rollcall_key or rollcall_key in logged_keys:
+        return
+    progress = await _fetch_monitor_rollcall_progress(session, rollcall_key)
+    final_rate_text = _final_attendance_rate_text(rollcall_key, progress)
+    if not final_rate_text:
+        return
+    final_message = '最後點名率：{}'.format(final_rate_text)
+    ctx.log_print(final_message)
+    ctx.log(
+        event='rollcall_final_attendance_rate',
+        counter=counter,
+        status='closed',
+        rollcall_id=rollcall_key,
+        rollcall_type=rollcall_type,
+        message=final_message,
+    )
+    logged_keys.add(rollcall_key)
+
+
 def _idle_poll_delay(monitoring_started_at: float, rollcall_flow_completed: bool) -> float:
     if not rollcall_flow_completed and monitoring_started_at > 0:
         try:
@@ -175,10 +258,12 @@ async def monitor_loop(
     active_detected_at = 0.0
     active_start_announced: set[str] = set()
     active_qr_prepare_attempted: set[str] = set()
+    final_attendance_rate_logged: set[str] = set()
     monitoring_started_at = 0.0
     startup_rollcall_flow_completed = False
     ctx.record_monitor_runtime('running')
     ctx.reset_monitor_status()
+    ctx.update_monitor_status(target_label=ctx.group_status_label(ctx.CONFIG), redraw=False)
     if ctx.teacher_assist_configured(ctx.CONFIG):
         ctx.update_monitor_status(teacher_state='ready' if ctx.TEACHER_READY else 'failed', redraw=False)
     else:
@@ -200,7 +285,7 @@ async def monitor_loop(
             delay = ctx.get_login_retry_delay(login_retry_attempt)
             next_login_retry_at = ctx.time.monotonic() + delay
             login_retry_attempt += 1
-            ctx.log_print('首次登入失敗，稍後會自動重試；也可按任意鍵用舊版記事本修改 config.yaml。')
+            ctx.log_print('首次登入失敗，稍後會自動重試；也可按任意鍵用舊版記事本修改 config.conf。')
         else:
             ctx.log_print('首次登入失敗，請按任意鍵用舊版記事本填寫 now、帳號與密碼。')
     error_cnt = 0
@@ -237,14 +322,13 @@ async def monitor_loop(
                     await ctx.sleep_or_shutdown(shutdown_event, 1)
                     continue
                 remaining = max(1, int(round(next_login_retry_at - now)))
-                notice_key = 'retry:{}'.format(login_retry_attempt)
-                if unauth_notice_state != notice_key:
-                    ctx.status_print('尚未登入，等待自動重試；若要修改設定，請按任意鍵編輯 config.yaml，關閉記事本後會重新載入。')
-                    unauth_notice_state = notice_key
+                if unauth_notice_state != 'retry:{}'.format(login_retry_attempt):
+                    ctx.status_print('尚未登入，等待自動重試；若要修改設定，請按任意鍵編輯 config.conf，關閉記事本後會重新載入。')
+                    unauth_notice_state = 'retry:{}'.format(login_retry_attempt)
                 await ctx.sleep_or_shutdown(shutdown_event, min(5.0, float(remaining)))
             else:
                 if unauth_notice_state != 'manual_config':
-                    ctx.status_print('偵測到尚未登入。請按任意鍵編輯 config.yaml，填好帳號密碼後關閉記事本。')
+                    ctx.status_print('偵測到尚未登入。請按任意鍵編輯 config.conf，填好帳號密碼後關閉記事本。')
                     unauth_notice_state = 'manual_config'
                 await ctx.sleep_or_shutdown(shutdown_event, 5)
             continue
@@ -316,6 +400,13 @@ async def monitor_loop(
             now_monotonic = ctx.time.monotonic()
 
             if active_rollcall_id and (status_msg == 'not_call' or (rollcall_id and rollcall_id != active_rollcall_id)):
+                await _log_final_attendance_rate_on_close(
+                    session,
+                    active_rollcall_id,
+                    active_rollcall_type,
+                    counter=ctx.cnt,
+                    logged_keys=final_attendance_rate_logged,
+                )
                 startup_rollcall_flow_completed = True
                 if active_rollcall_type == 'qrcode':
                     await ctx.stop_prepared_teacher_qr(active_rollcall_id)
@@ -377,11 +468,13 @@ async def monitor_loop(
                 progress = await _fetch_monitor_rollcall_progress(session, monitor_rollcall_id)
                 ignore_gate = ctx.get_ignore_attendance_rate_gate(ignore_attendance_rate_gate)
                 gate_passed = _attendance_rate_gate_passed(progress, ignore_gate=ignore_gate)
+                pre_flow_status_updated = False
+                pre_flow_legacy_detail = ''
                 if progress.get('ok'):
                     detail = progress.get('attendance_rate_text') or ctx.format_attendance_rate_text(monitor_rollcall_id, progress)
                     if status_msg == 'on_call_fine':
                         pass
-                    elif ignore_gate and not progress.get('present_rate_known'):
+                    elif ignore_gate:
                         detail = '{}；已忽略 15% 門檻'.format(detail)
                     elif not gate_passed:
                         detail = '{}；等待 >= {:.1f}%'.format(detail, ATTENDANCE_RATE_GATE_PERCENT)
@@ -393,7 +486,29 @@ async def monitor_loop(
                     rollcall_status = 'on_call_fine' if status_msg == 'on_call_fine' else ''
 
                 if gate_passed and status_msg != 'on_call_fine':
-                    status_msg = await ctx.handle_rollcall_decision(session, poll, cnt=ctx.cnt, use_prepared_qr=True)
+                    pre_flow_legacy_detail = _format_monitor_legacy_detail(detail, rollcall_status)
+                    _update_monitor_status(
+                        phase='monitoring',
+                        check_count=ctx.cnt,
+                        detail=detail,
+                        rollcall_status=rollcall_status,
+                        next_switch_at=next_switch,
+                        legacy_message='第 {} 次檢查: {}'.format(ctx.cnt, pre_flow_legacy_detail),
+                    )
+                    pre_flow_status_updated = True
+                    gate_detail = _format_gate_start_detail(
+                        monitor_rollcall_id,
+                        monitor_rollcall_type,
+                        progress,
+                        ignore_gate=ignore_gate,
+                    )
+                    status_msg = await ctx.handle_rollcall_decision(
+                        session,
+                        poll,
+                        cnt=ctx.cnt,
+                        use_prepared_qr=True,
+                        gate_detail=gate_detail,
+                    )
                     if status_msg == 'radar_failed':
                         detail = '雷達點名處理失敗，下一輪會再檢查'
                         rollcall_status = ''
@@ -408,15 +523,17 @@ async def monitor_loop(
                                 'is_number': '數字點名已觸發',
                                 'is_radar': '雷達點名已觸發',
                             }.get(status_msg, detail)
-
                 legacy_detail = _format_monitor_legacy_detail(detail, rollcall_status)
+                legacy_message = '第 {} 次檢查: {}'.format(ctx.cnt, legacy_detail)
+                if pre_flow_status_updated and legacy_detail == pre_flow_legacy_detail:
+                    legacy_message = None
                 _update_monitor_status(
                     phase='monitoring',
                     check_count=ctx.cnt,
                     detail=detail,
                     rollcall_status=rollcall_status,
                     next_switch_at=next_switch,
-                    legacy_message='第 {} 次檢查: {}'.format(ctx.cnt, legacy_detail),
+                    legacy_message=legacy_message,
                 )
             else:
                 if status_msg == 'not_call':
@@ -474,9 +591,9 @@ async def monitor_loop(
                 delay = ctx.get_login_retry_delay(login_retry_attempt)
                 next_login_retry_at = ctx.time.monotonic() + delay
                 login_retry_attempt += 1
-                ctx.log_print('自動登入失敗，稍後會持續自動重試；也可按任意鍵開啟 config.yaml。')
+                ctx.log_print('自動登入失敗，稍後會持續自動重試；也可按任意鍵開啟 config.conf。')
             else:
-                ctx.log_print('自動登入失敗，請按任意鍵用舊版記事本填寫 config.yaml。')
+                ctx.log_print('自動登入失敗，請按任意鍵用舊版記事本填寫 config.conf。')
             error_cnt = 0
             continue
         except ctx.TronHttpError as exc:
@@ -519,6 +636,7 @@ async def app_main(
     external_shutdown_event: ctx.Any=None,
     ignore_attendance_rate_gate: ctx.Optional[bool]=None,
 ) -> None:
+    ctx.INPUT_ENABLED = input_enabled
     ctx.bootstrap_config()
     shutdown_event = external_shutdown_event or ctx.asyncio.Event()
     for warning in ctx.consume_bootstrap_warnings():
@@ -535,6 +653,9 @@ async def app_main(
                 if ctx.cookie_cache_enabled(ctx.CONFIG) and ctx.load_session_cookies(session, ctx.BASE_DIR, active_profile.name):
                     ctx.COOKIE_CACHE_RESTORED = True
                     ctx.log_print('已載入 {} 的 cookie 快取。'.format(active_profile.name))
+                    c_status = ctx.cookie_cache_status(ctx.BASE_DIR, active_profile.name)
+                    if c_status.get("near_expiry"):
+                        ctx.log_print('【提示】Cookie 快取即將過期，可能需要重新登入。')
             except Exception as exc:
                 ctx.log(event='session_cookie_cache', status='failed', message='cookie 快取載入失敗。', error=exc)
             try:
@@ -555,12 +676,12 @@ async def app_main(
                     if await ctx.ensure_teacher_ready():
                         ctx.log_print('QR 教師帳號就緒。')
                     else:
-                        ctx.log_print('QR 點名功能未啟用：教師帳號登入失敗，請於 config.yaml 設定 teacher 帳號。')
+                        ctx.log_print('QR 點名功能未啟用：教師帳號登入失敗，請於 config.conf 設定 teacher 帳號。')
                 else:
                     ctx.TEACHER_READY = False
                     ctx.TEACHER_LOGIN_RESULT = ctx.LoginResult(status='missing_credentials', credential_source='missing')
                     ctx.update_monitor_status(teacher_state='failed', redraw=False)
-                    ctx.log_print('QR 點名功能未啟用：請於 config.yaml 設定 teacher 帳號。')
+                    ctx.log_print('QR 點名功能未啟用：請於 config.conf 設定 teacher 帳號。')
             except Exception as exc:
                 ctx.TEACHER_READY = False
                 ctx.TEACHER_LOGIN_RESULT = ctx.LoginResult(status='error', credential_source='runtime', error=ctx.normalize_text(exc))
@@ -607,16 +728,20 @@ def run_monitor_forever(*, no_input: bool=False, ignore_attendance_rate_gate: ct
         print(ctx.provider_block_message('monitor run'))
         return 1
     if no_input:
-        if not ctx.effective_config_now_value(ctx.CONFIG):
-            print('config.yaml 的 now 是空白；無輸入模式不會開啟記事本。若只有一個帳號可留空；多個帳號請先填寫 now。')
+        if not ctx.config_is_ready_to_run():
+            print('config.conf 尚未填入可用的帳號密碼；無輸入模式不會開啟記事本，請先填好 config.conf 再啟動。')
             return 1
         print('啟動自動登入與點名監控程式（無輸入模式）...')
+        print(ctx.describe_group_target(ctx.CONFIG))
     else:
         editor_result = ctx.ensure_config_now_or_open_editor(ctx.CONFIG_PATH)
         if not editor_result.get('ok'):
-            print(editor_result.get('message') or 'config.yaml 尚未填寫 now，已停止監控。')
-            return 1
-        print('啟動監控。此視窗只輸出事件；按任意鍵會用舊版記事本開啟 config.yaml。')
+            # Still not configured after the one-time auto-open: do NOT exit. Fall
+            # through into the monitor, which keeps waiting and lets the user press
+            # any key to edit config.conf again.
+            print(editor_result.get('message') or '尚未偵測到可用帳密，將進入監控；按任意鍵可開啟 config.conf 編輯。')
+        print('啟動監控。此視窗只輸出事件；按任意鍵會用舊版記事本開啟 config.conf。')
+        print(ctx.describe_group_target(ctx.CONFIG))
     ctx.time.sleep(1)
     restart_count = 0
     while True:

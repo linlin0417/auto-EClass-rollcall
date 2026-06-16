@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_submodules, collect_all, collect_data_files
 
 
 APP_NAME = "auto-rollcall-thu-tronclass"
@@ -29,6 +29,7 @@ HIDDEN_IMPORTS = sorted(
         [
             "troTHU.account_store",
             "troTHU.account_runtime_store",
+            "troTHU.addon_runtime",
             "troTHU.adapter_bridge",
             "troTHU.adapter_server",
             "troTHU.auth_runtime",
@@ -62,6 +63,7 @@ HIDDEN_IMPORTS = sorted(
             "troTHU.discord_gateway",
             "troTHU.global_radar_solver",
             "troTHU.local_scanner",
+            "troTHU.login_adapters",
             "troTHU.line_adapter",
             "troTHU.input_safety",
             "troTHU.logging_runtime",
@@ -71,6 +73,8 @@ HIDDEN_IMPORTS = sorted(
             "troTHU.number_runtime",
             "troTHU.notification_bus",
             "troTHU.observability",
+            "troTHU.ocr_captcha",
+            "troTHU.ocr_sidecar",
             "troTHU.package_diagnostics",
             "troTHU.pending_qr",
             "troTHU.providers",
@@ -91,7 +95,7 @@ HIDDEN_IMPORTS = sorted(
             "troTHU.rollcall_runtime",
             "troTHU.runtime_context",
             "troTHU.runtime_helpers",
-            "troTHU.simple_config",
+            "troTHU.config_format",
             "troTHU.group_runtime",
             "troTHU.status_reports",
             "troTHU.telegram_adapter",
@@ -107,19 +111,20 @@ HIDDEN_IMPORTS = sorted(
     )
 )
 
+# The heavy OCR stack (ddddocr/onnxruntime/cv2/numpy/PIL) is NOT bundled — it lives
+# in the downloadable add-on bundle as the `fju-ocr` sidecar (see fju-ocr.spec /
+# troTHU/addon_runtime.py). Keeping the default exe lean.
 EXCLUDES = [
     "aiohttp.pytest_plugin",
     "cv2",
-    "greenlet",
+    "ddddocr",
     "keyring",
     "keyrings",
     "mypy",
     "numpy",
+    "onnxruntime",
     "PIL",
     "Pillow",
-    "playwright",
-    "playwright.async_api",
-    "pyee",
     "pyzbar",
     "pydantic",
     "pydantic_core",
@@ -128,12 +133,43 @@ EXCLUDES = [
     "tests",
 ]
 
+playwright_datas, playwright_binaries, playwright_hiddenimports = collect_all("playwright")
+playwright_datas_extra = collect_data_files("playwright", include_py_files=True)
+
+# Strip the 92MB node driver (driver/node.exe) — it's the bulk of playwright and is
+# downloaded in the add-on bundle; browser_install sets PLAYWRIGHT_NODEJS_PATH to it.
+# The small driver/package/ (cli.js) stays, since playwright resolves it package-relative.
+def _strip_node(entries):
+    # Match the source filename (collect_all puts node.exe in entry[0]; the dest in
+    # entry[1] may be just the "playwright/driver" directory).
+    return [e for e in entries if str(e[0]).replace("\\", "/").rsplit("/", 1)[-1].lower() != "node.exe"]
+
+combined_datas = DATAS + _strip_node(playwright_datas) + _strip_node(playwright_datas_extra)
+combined_binaries = _strip_node(playwright_binaries)
+combined_hiddenimports = sorted(
+    set(
+        HIDDEN_IMPORTS
+        + playwright_hiddenimports
+        + [
+            "playwright",
+            "playwright.async_api",
+            "playwright._impl._driver",
+            "greenlet",
+            "pyee",
+            "troTHU.browser_install",
+            "troTHU.addon_runtime",
+            "troTHU.ocr_captcha",
+            "troTHU.ocr_sidecar",
+        ]
+    )
+)
+
 a = Analysis(
     [str(ENTRYPOINT)],
     pathex=[str(ROOT)],
-    binaries=[],
-    datas=DATAS,
-    hiddenimports=HIDDEN_IMPORTS,
+    binaries=combined_binaries,
+    datas=combined_datas,
+    hiddenimports=combined_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -141,6 +177,11 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+# node.exe is re-added by PyInstaller's bundled playwright hook (not just collect_all),
+# so strip it from the final TOCs here — this is the authoritative removal of the 92MB
+# driver. driver/package (cli.js) stays; browser_install downloads node.exe on demand.
+a.datas = [t for t in a.datas if not str(t[0]).replace("\\", "/").lower().endswith("node.exe")]
+a.binaries = [t for t in a.binaries if not str(t[0]).replace("\\", "/").lower().endswith("node.exe")]
 pyz = PYZ(a.pure)
 
 exe = EXE(

@@ -5,6 +5,9 @@ on:
     branches: ["**"]
   pull_request:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 permissions:
   contents: read
 
@@ -20,8 +23,15 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Lint (ruff)
+        # Fail fast on lint before the heavier install + test steps.
+        # Keep this pin in sync with pyproject.toml [project.optional-dependencies].dev.
+        run: |
+          python -m pip install "ruff>=0.15"
+          python -m ruff check troTHU tests
+
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -e .
 
       - name: Targeted smoke tests
         run: python -m unittest -v tests.test_app_shell tests.test_app_shell_dashboard tests.test_release_builder tests.test_release_checklist tests.test_readme_usage tests.test_cli tests.test_package_diagnostics

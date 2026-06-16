@@ -7,13 +7,13 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 
 PROJECT_NAME = "auto-rollcall-thu-tronclass"
-PROJECT_VERSION = "1.3a1"
-PROJECT_RELEASE_LABEL = "1.3-alpha.1"
+PROJECT_VERSION = "1.5a2"
+PROJECT_RELEASE_LABEL = "1.5-alpha.2"
 SPEC_NAME = "auto-rollcall-thu-tronclass.spec"
 FORBIDDEN_BUNDLE_NAMES = (
     ".codex-worklog.md",
-    "config.yaml",
-    "config.advanced.yaml",
+    "config.conf",
+    "config.advanced.toml",
     "state",
     "log",
     "cookies",
@@ -42,11 +42,11 @@ REQUIRED_RUNTIME_MODULES = (
     "yaml",
     "nacl",
 )
+# The heavy OCR stack and the Playwright node driver are NOT in the lean default
+# exe — they live in the downloadable add-on bundle. So they must be excluded from
+# the spec and absent from the main artifact. (driver/node.exe is matched as a path
+# part; the add-on zip is validated separately with strict_optional=False.)
 SMALL_BUNDLE_SPEC_EXCLUDES = (
-    "playwright",
-    "playwright.async_api",
-    "greenlet",
-    "pyee",
     "keyring",
     "keyrings",
     "cv2",
@@ -54,11 +54,10 @@ SMALL_BUNDLE_SPEC_EXCLUDES = (
     "PIL",
     "Pillow",
     "pyzbar",
+    "ddddocr",
+    "onnxruntime",
 )
 SMALL_BUNDLE_ARTIFACT_PARTS = (
-    "playwright",
-    "greenlet",
-    "pyee",
     "keyring",
     "keyrings",
     "cv2",
@@ -67,6 +66,9 @@ SMALL_BUNDLE_ARTIFACT_PARTS = (
     "Pillow",
     "pyzbar",
     "opencv_python_headless",
+    "ddddocr",
+    "onnxruntime",
+    "node.exe",
 )
 OPTIONAL_RUNTIME_MODULES = (
     "keyring",
@@ -239,6 +241,7 @@ def _pyproject_report(path: Path) -> Dict[str, Any]:
     scripts = project.get("scripts", {}) if isinstance(project, Mapping) else {}
     dependencies = project.get("dependencies", []) if isinstance(project, Mapping) else []
     optional = project.get("optional-dependencies", {}) if isinstance(project, Mapping) else {}
+    dependency_text = "\n".join(dependencies).lower()
     checks = [
         _check("pyproject exists", path.exists(), path.name, severity="fail"),
         _check("project name", project.get("name") == PROJECT_NAME, PROJECT_NAME, severity="fail"),
@@ -250,6 +253,9 @@ def _pyproject_report(path: Path) -> Dict[str, Any]:
             "{} entrypoint".format(PROJECT_NAME),
             severity="fail",
         ),
+        _check("aiohttp dependency", "aiohttp" in dependency_text, "aiohttp listed in pyproject.toml", severity="fail"),
+        _check("pyyaml dependency", "pyyaml" in dependency_text, "PyYAML listed in pyproject.toml", severity="fail"),
+        _check("pynacl dependency", "pynacl" in dependency_text, "PyNaCl listed in pyproject.toml", severity="warn"),
     ]
     return {
         "exists": path.exists(),
@@ -267,19 +273,11 @@ def _pyproject_report(path: Path) -> Dict[str, Any]:
 
 
 def _requirements_report(path: Path) -> Dict[str, Any]:
-    dependencies = _requirement_lines(path)
-    dependency_text = "\n".join(dependencies).lower()
-    checks = [
-        _check("requirements exists", path.exists(), path.name, severity="warn"),
-        _check("aiohttp dependency", "aiohttp" in dependency_text, "aiohttp listed", severity="fail"),
-        _check("pyyaml dependency", "pyyaml" in dependency_text, "PyYAML listed", severity="fail"),
-        _check("pynacl dependency", "pynacl" in dependency_text, "PyNaCl listed", severity="warn"),
-    ]
     return {
-        "exists": path.exists(),
+        "exists": False,
         "file": path.name,
-        "dependencies": dependencies,
-        "checks": checks,
+        "dependencies": [],
+        "checks": [],
     }
 
 
@@ -319,11 +317,11 @@ def _git_hygiene_report(base_dir: Path) -> Dict[str, Any]:
         for pattern in REQUIRED_GITATTRIBUTES_PATTERNS
         if pattern not in attributes_text
     ]
-    config_ignored = "config.yaml" in ignore_lines or "/config.yaml" in ignore_lines
+    config_ignored = "config.conf" in ignore_lines or "/config.conf" in ignore_lines
     checks = [
         _check(".gitignore exists", gitignore.exists(), ".gitignore", severity="warn"),
         _check(".gitignore ignores runtime artifacts", not missing_ignore, "build/dist/state/log/reference projects ignored", severity="warn"),
-        _check("local config ignored", config_ignored, "config.yaml is ignored", severity="fail"),
+        _check("local config ignored", config_ignored, "config.conf is ignored", severity="fail"),
         _check(".gitattributes exists", gitattributes.exists(), ".gitattributes", severity="warn"),
         _check(".gitattributes normalizes text", not missing_attributes, "common text file types use LF", severity="warn"),
     ]

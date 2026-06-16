@@ -200,5 +200,110 @@ class WebViewSyncTest(unittest.TestCase):
             self.assertTrue(result["saved"])
 
 
+class ValidateCookieRecordsTest(unittest.IsolatedAsyncioTestCase):
+    """Exercise the async-native cookie validation directly against the fake
+    server, in the test's own event loop — no background thread, no asyncio.run
+    bridging (the ThreadedFakeServer workaround is gone)."""
+
+    async def test_accepts_valid_and_rejects_invalid_session(self) -> None:
+        from tests.fake_tron_server import FakeTronServer
+        from troTHU.webview_sync import validate_cookie_records
+
+        async with FakeTronServer() as server:
+            provider_config = {
+                "key": "custom_manual",
+                "base_url": server.base_url,
+                "login_url": server.base_url + "/login",
+                "auth_flow": "manual_cookie_only",
+                "session_cookie_domain": "127.0.0.1",
+            }
+            valid = parse_webview_cookie_export(  # matches FakeTronServer.session_cookie
+                [{"name": "session", "value": "local-test-session", "domain": "127.0.0.1", "path": "/"}]
+            )
+            invalid = parse_webview_cookie_export(
+                [{"name": "session", "value": "bad-session-cookie", "domain": "127.0.0.1", "path": "/"}]
+            )
+            self.assertTrue(await validate_cookie_records(provider_config, valid))
+            self.assertFalse(await validate_cookie_records(provider_config, invalid))
+
+
+class WebViewImportValidationGateTest(unittest.TestCase):
+    """import_webview_cookies must run API validation for providers whose adapter
+    requires it and refuse to save on failure. The network probe is stubbed so the
+    test stays offline and loop-free."""
+
+    def _config(self):
+        return {"webview": {"cookie_sync": {
+            "enabled": True, "allow_cookie_import": True, "allow_experimental_provider": True,
+        }}}
+
+    def _provider(self):
+        return {
+            "key": "custom_manual",
+            "base_url": "https://tron.example.edu",
+            "login_url": "https://tron.example.edu/login",
+            "auth_flow": "manual_cookie_only",
+            "session_cookie_domain": "tron.example.edu",
+        }
+
+    def _records(self):
+        return parse_webview_cookie_export(
+            [{"name": "session", "value": "abc", "domain": "tron.example.edu", "path": "/"}]
+        )
+
+    def test_import_saves_when_validation_passes(self) -> None:
+        from unittest.mock import patch
+        with patch("troTHU.webview_sync._validate_api_session", return_value=True):
+            with tempfile.TemporaryDirectory() as temp_dir:
+                result = import_webview_cookies(
+                    Path(temp_dir), "default", self._records(),
+                    config=self._config(), provider=self._provider(), save=True,
+                )
+                self.assertTrue(result["saved"])
+
+    def test_import_blocks_when_validation_fails(self) -> None:
+        from unittest.mock import patch
+        with patch("troTHU.webview_sync._validate_api_session", return_value=False):
+            with tempfile.TemporaryDirectory() as temp_dir:
+                with self.assertRaises(WebViewSyncError) as blocked:
+                    import_webview_cookies(
+                        Path(temp_dir), "default", self._records(),
+                        config=self._config(), provider=self._provider(), save=True,
+                    )
+                self.assertEqual(blocked.exception.reason, "api_validation_failed")
+
+
+class WebViewPreviewWarningTest(unittest.TestCase):
+    def test_preview_warns_when_session_cookie_missing(self) -> None:
+        # An accepted-but-non-session cookie must still surface the missing-session
+        # hint (regression guard: this warning was removed and is now restored).
+        records = parse_webview_cookie_export(
+            [{"name": "remember_token", "value": "x", "domain": "ilearn.thu.edu.tw", "path": "/"}]
+        )
+        preview = build_webview_cookie_preview(
+            records,
+            config={"webview": {"cookie_sync": {"cookie_name_allowlist": ["session", "remember_token"]}}},
+            provider=THU_PROVIDER,
+        )
+        self.assertIn("session_cookie_missing", preview["warnings"])
+        self.assertFalse(preview["has_session"])
+
+
+class WebViewStatusIsCheapTest(unittest.TestCase):
+    def test_status_reports_validation_requirement_without_network(self) -> None:
+        # Status must be a side-effect-free snapshot: it reports whether validation
+        # WILL be required, but never performs the network probe itself.
+        from unittest.mock import patch
+        manual_provider = {"key": "custom_manual", "base_url": "https://tron.example.edu",
+                           "auth_flow": "manual_cookie_only"}
+        with patch("troTHU.webview_sync.validate_cookie_records") as probe:
+            status = build_webview_sync_status(
+                {"webview": {"cookie_sync": {"enabled": True, "allow_cookie_import": True}}},
+                provider=manual_provider,
+            )
+        probe.assert_not_called()
+        self.assertEqual(status["cookie_validation"], "required")
+
+
 if __name__ == "__main__":
     unittest.main()

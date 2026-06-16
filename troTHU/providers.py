@@ -1,3 +1,4 @@
+from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping
 
@@ -128,17 +129,16 @@ PROVIDERS: Dict[str, ProviderDefinition] = {
             local_scanner=True,
             direct_code_lookup=True,
         ),
-        notes="Primary supported provider. Kept compatible with the legacy config.yaml flow.",
+        notes="Primary supported provider. Kept compatible with the legacy config.conf flow.",
     ),
     "fju": ProviderDefinition(
         key="fju",
         label="Fu Jen Catholic University TronClass",
         base_url="https://elearn2.fju.edu.tw",
         login_url="https://elearn2.fju.edu.tw/login",
-        auth_flow="manual_cookie_only",
+        auth_flow="fju_ocr_captcha",
         status="ready",
         support_level="ready",
-        user_visible=False,
         capabilities=ProviderCapabilities(
             number=True,
             radar=True,
@@ -149,7 +149,7 @@ PROVIDERS: Dict[str, ProviderDefinition] = {
             local_scanner=True,
             direct_code_lookup=True,
         ),
-        notes="Hidden from default user-facing provider lists. FJU login is manual-cookie-only; authenticated TronClass API flows share the common runtime.",
+        notes="Fu Jen CAS login adds a 4-digit numeric image captcha solved locally via the optional 'ocr' extra (ddddocr). Without that extra it falls back to manual-cookie login. Authenticated TronClass API flows share the common runtime.",
     ),
     "tku": ProviderDefinition(
         key="tku",
@@ -191,6 +191,25 @@ PROVIDERS: Dict[str, ProviderDefinition] = {
         ),
         notes="Public TronClass cloud tenant. Uses the shared TronClass APIs after an email/password login form POST.",
     ),
+    "scu": ProviderDefinition(
+        key="scu",
+        label="Soochow University TronClass",
+        base_url="https://tronclass.scu.edu.tw",
+        login_url="https://tronclass.scu.edu.tw/cas/login?ui_locales=zh-TW&service=https%3A//tronclass.scu.edu.tw/user/index&locale=zh_TW",
+        auth_flow="thu_cas",
+        status="ready",
+        capabilities=ProviderCapabilities(
+            number=True,
+            radar=True,
+            qrcode=True,
+            course_discovery=True,
+            teacher_rollcall=True,
+            manual_qr=True,
+            local_scanner=True,
+            direct_code_lookup=True,
+        ),
+        notes="Soochow University TronClass provider. Uses standard CAS login form extraction.",
+    ),
 }
 
 PROVIDER_ALIASES = {
@@ -215,6 +234,11 @@ PROVIDER_ALIASES = {
     "www.tronclass.com.tw": "tronclass",
     "官方": "tronclass",
     "官方站": "tronclass",
+    "scu": "scu",
+    "scu.edu": "scu",
+    "soochow": "scu",
+    "東吳": "scu",
+    "東吳大學": "scu",
 }
 
 
@@ -306,6 +330,54 @@ def provider_support_report(provider: Any, allow_experimental: bool = False) -> 
     }
 
 
+def extract_host(t: str) -> str:
+    t = str(t or "").strip()
+    if not t:
+        return ""
+    if not (t.startswith("http://") or t.startswith("https://")):
+        t = "https://" + t
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(t)
+        host = parsed.hostname or ""
+        return host.lower().strip()
+    except Exception:
+        return ""
+
+
+def normalize_base_url(text: str) -> tuple[str, str]:
+    text_clean = str(text or "").strip()
+    if not text_clean:
+        return ("plain", "")
+    host = extract_host(text_clean)
+    # A pasted URL / dotted host ALWAYS means "open a browser and log in
+    # manually" — even when the host belongs to a school we support via API.
+    # "Typing a URL = manual login" is intentional; only a bare short name/key
+    # (THU / TKU / SCU / TRONCLASS / 東吳 …) routes to automatic API login.
+    if text_clean.startswith(("http://", "https://")) or ("." in host and not host.endswith(".")):
+        return ("url", "https://{}".format(host))
+    normalized_key = text_clean.lower()
+    if normalized_key in PROVIDER_ALIASES:
+        return ("alias", PROVIDER_ALIASES[normalized_key])
+    if normalized_key in PROVIDERS:
+        return ("alias", normalized_key)
+    return ("plain", text_clean)
+
+
+def derive_url_provider_key(text: str) -> str:
+    """Stable, filesystem-safe synthetic provider key for a pasted base URL, e.g.
+    'https://iclass.demo.edu.tw/login' -> 'url_iclass_demo_edu_tw'. Returns '' when
+    the text is not URL-form. Single source of truth for this derivation so the
+    config parser, the merge step, and the cookie-cache profile name all agree."""
+    kind, result = normalize_base_url(text)
+    if kind != "url":
+        return ""
+    host = extract_host(result) or result
+    host_clean = host.replace(".", "_").replace("-", "_").replace(":", "_").replace("/", "_").lower().strip()
+    host_clean = "".join(c for c in host_clean if c.isalnum() or c == "_")
+    return "url_{}".format(host_clean) if host_clean else ""
+
+
 def normalize_provider_config(value: Any) -> Dict[str, Any]:
     if isinstance(value, str):
         raw_config: Dict[str, Any] = {"current": value}
@@ -317,18 +389,58 @@ def normalize_provider_config(value: Any) -> Dict[str, Any]:
     requested = raw_config.get("current", raw_config.get("name", raw_config.get("school", "")))
     requested_key = normalize_provider_name(requested)
     current = normalize_provider_name(requested)
-    fallback_reason = ""
-    if current not in PROVIDERS:
-        fallback_reason = "unknown_provider"
-        current = DEFAULT_PROVIDER
 
     available = raw_config.get("available")
     if not isinstance(available, Mapping):
         available = {}
 
+    all_keys = set(PROVIDERS.keys())
+    for key, override in available.items():
+        if isinstance(override, Mapping) and "base_url" in override:
+            all_keys.add(key)
+
+    fallback_reason = ""
+    if current not in all_keys:
+        fallback_reason = "unknown_provider"
+        current = DEFAULT_PROVIDER
+
     merged_available: Dict[str, Dict[str, Any]] = {}
-    for key, provider in sorted(PROVIDERS.items()):
-        merged = provider.to_config()
+    for key in sorted(all_keys):
+        if key in PROVIDERS:
+            merged = PROVIDERS[key].to_config()
+        else:
+            base_url = ""
+            override = available.get(key)
+            if isinstance(override, Mapping):
+                base_url = str(override.get("base_url") or "").strip()
+            endpoints = tronclass_api_endpoints(base_url)
+            merged = {
+                "key": key,
+                "label": key.upper(),
+                "base_url": base_url,
+                "login_url": base_url + "/login" if base_url else "",
+                "rollcalls_url": endpoints["rollcalls_url"],
+                "current_semester_url": endpoints["current_semester_url"],
+                "courses_url": endpoints["courses_url"],
+                "auth_flow": "interactive_browser" if key.startswith("url_") else "thu_cas",
+                "status": "ready",
+                "support_level": "ready",
+                "ready": True,
+                "daily_ready": True,
+                "user_visible": True,
+                "capabilities": ProviderCapabilities(
+                    number=True,
+                    radar=True,
+                    qrcode=True,
+                    course_discovery=True,
+                    teacher_rollcall=True,
+                    manual_qr=True,
+                    local_scanner=True,
+                    direct_code_lookup=True,
+                ).to_dict(),
+                "notes": "Custom configured provider.",
+            }
+
         override = available.get(key)
         if isinstance(override, Mapping):
             if "base_url" in override:
@@ -337,7 +449,10 @@ def normalize_provider_config(value: Any) -> Dict[str, Any]:
                 merged["rollcalls_url"] = endpoints["rollcalls_url"]
                 merged["current_semester_url"] = endpoints["current_semester_url"]
                 merged["courses_url"] = endpoints["courses_url"]
+                if key not in PROVIDERS:
+                    merged["login_url"] = merged["base_url"] + "/login" if merged["base_url"] else ""
             for override_key in (
+                "label",
                 "login_url",
                 "rollcalls_url",
                 "current_semester_url",

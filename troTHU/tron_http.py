@@ -1,3 +1,4 @@
+from __future__ import annotations
 import html
 import json
 import re
@@ -112,6 +113,20 @@ PUBLIC_CLOUD_ORG_ID_PATTERN = re.compile(
     r":org-id\s*=\s*(['\"])(.*?)\1",
     re.IGNORECASE | re.DOTALL,
 )
+
+# --- FJU (Fu Jen Catholic University) CAS captcha login --------------------
+# elearn2.fju.edu.tw is an Apereo CAS tenant whose login form (id="fm1", parsed
+# fine by extract_login_form) adds a 4-digit numeric image captcha served at
+# captcha.jpg (relative to /cas/, bound to JSESSIONID). Verified by live login.
+# The submit is an ordinary form-encoded CAS POST; only the captcha field and
+# the OCR-solve-with-retry differ from the shared thu_cas flow. CAS "lt" login
+# tickets are single-use, so on a failed POST the adapter re-parses the freshly
+# rendered form from the response body before retrying.
+FJU_CAPTCHA_IMAGE_NAME = "captcha.jpg"
+FJU_CAPTCHA_FIELD = "captcha"
+FJU_CAPTCHA_CHARSET = "0123456789"
+FJU_CAPTCHA_LENGTH = 4
+FJU_MAX_CAPTCHA_ATTEMPTS = 4
 
 
 class TronHttpError(Exception):
@@ -458,6 +473,22 @@ class TronHttpClient:
             fields["vidcode"] = await self._fetch_tku_image_validate_code(form.action_url)
         return LoginForm(action_url=form.action_url, fields=fields)
 
+    async def fetch_captcha_image(self, captcha_url: str) -> bytes:
+        """GET a login captcha image in the current session and return its bytes.
+
+        Used by image-captcha login adapters (e.g. FJU CAS). The image is bound
+        to the session cookie set when the login form was fetched, so this must
+        run on the same client/session. Raises LoginPageChangedError on a bad or
+        empty response so the caller can fall back to browser/manual login.
+        """
+        async with self.session.get(captcha_url, **self.request_kwargs()) as resp:
+            if resp.status != 200:
+                raise LoginPageChangedError("驗證碼圖片回應 HTTP {}。".format(resp.status))
+            data = await resp.read()
+        if not data:
+            raise LoginPageChangedError("驗證碼圖片內容為空。")
+        return data
+
     async def _follow_tku_login_redirects(
         self,
         html_text: str,
@@ -492,77 +523,25 @@ class TronHttpClient:
 
         return final_url
 
+    def _select_login_adapter(self) -> Any:
+        from troTHU.login_adapters import get_login_adapter
+        flow = str(getattr(self.endpoints, "auth_flow", "") or "").strip().lower()
+        if not flow:
+            if self.is_tku_fast_sso():
+                flow = "tku_sso_browser"
+            elif self.is_public_cloud_email_login():
+                flow = "public_cloud_email"
+            else:
+                flow = "thu_cas"
+        return get_login_adapter(flow)
+
     async def fetch_login_form(self) -> LoginForm:
-        html_text, current_url = await self._get_login_form_response(self.endpoints.login_url)
-        if self.is_public_cloud_email_login():
-            try:
-                return extract_public_cloud_email_login_form(html_text, current_url)
-            except LoginPageChangedError:
-                return extract_login_form(html_text, current_url)
-        if not self.is_tku_fast_sso():
-            return extract_login_form(html_text, self.endpoints.login_url)
-
-        try:
-            return await self._complete_tku_login_form(extract_login_form(html_text, current_url))
-        except LoginPageChangedError:
-            if "redirectLoginPage" not in html_text and "logineb.jsp" not in html_text:
-                raise
-
-        self._set_tku_browser_cookie("IV_JCT", "%2FNEAI")
-        sso_login_form_url = make_tku_sso_login_form_url(current_url)
-        html_text = await self._get_login_form_page(sso_login_form_url, TKU_SSO_FORM_HEADERS)
-        form = extract_login_form(html_text, sso_login_form_url)
-        if ";jsessionid=" in form.action_url:
-            html_text = await self._get_login_form_page(sso_login_form_url, TKU_SSO_FORM_HEADERS)
-            form = extract_login_form(html_text, sso_login_form_url)
-        return await self._complete_tku_login_form(form)
+        adapter = self._select_login_adapter()
+        return await adapter.fetch_login_form(self)
 
     async def submit_login(self, form: LoginForm, username: str, password: str) -> LoginOutcome:
-        form_data = dict(form.fields)
-        form_data.update(
-            {
-                form.username_field: username,
-                form.password_field: password,
-            }
-        )
-
-        headers = None
-        allow_redirects = True
-        if self.is_tku_fast_sso() and urlparse(form.action_url).hostname == TKU_SSO_HOST:
-            headers = TKU_SSO_SUBMIT_HEADERS
-            allow_redirects = False
-
-        post_kwargs: Dict[str, Any] = {"data": form_data}
-        if headers is not None:
-            post_kwargs["headers"] = headers
-            post_kwargs["allow_redirects"] = allow_redirects
-
-        async with self.session.post(
-            form.action_url,
-            **post_kwargs,
-            **self.request_kwargs(),
-        ) as resp:
-            html_text = await resp.text()
-            final_url = str(resp.url)
-
-        if headers is not None:
-            final_url = await self._follow_tku_login_redirects(html_text, final_url)
-
-        if self.endpoints.session_cookie_domain == DEFAULT_ENDPOINTS.session_cookie_domain:
-            has_session = has_session_cookie(self.session)
-        else:
-            try:
-                has_session = has_session_cookie(self.session, self.endpoints.session_cookie_domain)
-            except TypeError:
-                # Some legacy tests and external monkeypatches replace
-                # has_session_cookie with a one-argument callable.
-                has_session = has_session_cookie(self.session)
-        if headers is not None and not has_session:
-            raise LoginPageChangedError("TKU fast SSO login did not yield an iClass session cookie.")
-        if "login" in final_url.lower() and not has_session:
-            raise LoginRejectedError("登入失敗，請檢查帳號或密碼是否正確。")
-
-        return LoginOutcome(final_url=final_url, has_session=has_session)
+        adapter = self._select_login_adapter()
+        return await adapter.submit_login(self, form, username, password)
 
     async def fetch_user_id(self) -> Optional[int]:
         async with self.session.get(self.endpoints.base_url, **self.request_kwargs()) as resp:

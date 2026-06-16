@@ -28,7 +28,7 @@ class PackageDiagnosticsTest(unittest.TestCase):
         self.assertEqual(project["version"], PROJECT_VERSION)
         self.assertEqual(project["scripts"]["trothu"], "troTHU.tron:main")
         self.assertEqual(project["scripts"]["auto-rollcall-thu-tronclass"], "troTHU.tron:main")
-        self.assertIn("aiohttp>=3.9.5", project["dependencies"])
+        self.assertIn("aiohttp>=3.10.11", project["dependencies"])
         self.assertNotIn("textual>=8.2.0", project["dependencies"])
 
     def test_pyinstaller_spec_excludes_local_secrets_and_tracks_hidden_imports(self) -> None:
@@ -49,7 +49,7 @@ class PackageDiagnosticsTest(unittest.TestCase):
         self.assertIn("troTHU.global_radar_solver", report["hidden_imports"])
         self.assertIn("troTHU.radar_map_assist", report["hidden_imports"])
         self.assertIn("troTHU.telegram_adapter", report["hidden_imports"])
-        self.assertIn("troTHU.simple_config", report["hidden_imports"])
+        self.assertIn("troTHU.config_format", report["hidden_imports"])
         self.assertIn("troTHU.config_editor", report["hidden_imports"])
         self.assertIn("troTHU.cli_teacher", report["hidden_imports"])
         self.assertIn("troTHU.group_runtime", report["hidden_imports"])
@@ -59,9 +59,9 @@ class PackageDiagnosticsTest(unittest.TestCase):
         self.assertIn("troTHU.teacher_rollcall", report["hidden_imports"])
         self.assertIn("troTHU.qr_teacher_runtime", report["hidden_imports"])
         self.assertIn("troTHU.webview_sync", report["hidden_imports"])
-        self.assertIn("playwright", report["excludes"])
+        self.assertNotIn("playwright", report["excludes"])
         self.assertIn("keyring", report["excludes"])
-        self.assertIn("cv2", report["excludes"])
+        self.assertIn("cv2", report["excludes"])  # OCR stack lives in the add-on bundle, not the lean exe
         self.assertEqual(report["missing_small_bundle_excludes"], [])
         self.assertEqual(report["hidden_import_gaps"], [])
 
@@ -77,7 +77,7 @@ class PackageDiagnosticsTest(unittest.TestCase):
         self.assertIn("troTHU.global_radar_solver", gaps)
         self.assertIn("troTHU.radar_map_assist", gaps)
         self.assertIn("troTHU.telegram_adapter", gaps)
-        self.assertIn("troTHU.simple_config", gaps)
+        self.assertIn("troTHU.config_format", gaps)
         self.assertIn("troTHU.config_editor", gaps)
         self.assertIn("troTHU.cli_teacher", gaps)
         self.assertIn("troTHU.group_runtime", gaps)
@@ -171,6 +171,7 @@ class PackageDiagnosticsTest(unittest.TestCase):
 
         for pattern in ("build/", "dist/", "state/", "log/", ".tmp-tests/", "__pycache__/", "其他專案參考/"):
             self.assertIn(pattern, gitignore)
-        self.assertIn("\n/config.yaml\n", "\n" + gitignore + "\n")
+        self.assertIn("\n/config.conf\n", "\n" + gitignore + "\n")
+        self.assertIn("\n/config.advanced.toml\n", "\n" + gitignore + "\n")
         for pattern in ("*.py text eol=lf", "*.md text eol=lf", "*.yaml text eol=lf", "*.spec text eol=lf"):
             self.assertIn(pattern, gitattributes)

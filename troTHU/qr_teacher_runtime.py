@@ -68,14 +68,22 @@ def _teacher_login_result(status: str, source: str, user: str = "", final_url: s
 
 
 def _teacher_requires_api_validation(endpoints) -> bool:
+    # Mirror the student-side predicate: union the legacy auth_flow set with the
+    # login-adapter registry so a new school's adapter automatically participates
+    # and the teacher path stays consistent with student login.
     auth_flow = ctx.normalize_text(getattr(endpoints, "auth_flow", "")).lower()
-    return auth_flow in {
+    requires = auth_flow in {
         "public_cloud_email",
         "browser_sso",
         "oidc_browser",
         "sso_browser",
         "tku_sso_browser",
     }
+    try:
+        requires = requires or ctx.get_login_adapter(auth_flow).requires_api_session_validation
+    except Exception:
+        pass
+    return requires
 
 
 async def teacher_login(session, endpoints):
@@ -192,7 +200,7 @@ async def resolve_teacher_course_id(client, config) -> str:
     ctx.log(
         event="qr_teacher_course",
         status="missing",
-        message="QR 教師帳號找不到可用課程；請在 config.yaml teacher.course 手動填課程 ID。",
+        message="QR 教師帳號找不到可用課程；請在 config.conf teacher.course 手動填課程 ID。",
         payload_excerpt=payload,
     )
     return ""
@@ -235,7 +243,7 @@ async def prepare_teacher_assisted_qr(rollcall) -> ctx.Dict[str, ctx.Any]:
         ctx.update_monitor_status(teacher_state="failed")
         return {"ok": False, "status": "not_configured", "student_rollcall_id": student_rollcall_id}
     if not await ensure_teacher_ready():
-        ctx.log_print("QR 點名功能未啟用：教師帳號未登入，請於 config.yaml 設定 teacher 帳號。")
+        ctx.log_print("QR 點名功能未啟用：教師帳號未登入，請於 config.conf 設定 teacher 帳號。")
         return {"ok": False, "status": "teacher_not_ready", "student_rollcall_id": student_rollcall_id}
     try:
         client = _teacher_qr_client()
