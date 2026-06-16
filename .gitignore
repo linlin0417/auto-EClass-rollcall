@@ -105,3 +105,6 @@ tests/test_rollcalls.js
 
 # Tdr非主要開發鏈路
 .antigravity/
+
+# npm ver 開發依賴
+node_modules/

@@ -9,6 +9,7 @@ workflows/
 *.log
 config.yaml
 session.json
+README-Python.md
 
 # Ignore git/editor folders
 .git/

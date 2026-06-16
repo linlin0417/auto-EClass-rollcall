@@ -1,7 +1,7 @@
 {
   "name": "auto-rollcall-thu-tronclass",
-  "version": "2.0.1",
-  "description": "TronClass 校園點名系統的全自動點名工具",
+  "version": "3.0.0",
+  "description": "TronClass 校園點名系統的全自動點名工具 (Clean Room Node.js Version)",
   "main": "src/cli/index.js",
   "bin": {
     "trothu": "bin/trothu.js",
@@ -20,7 +20,7 @@
     "rollcall",
     "attendance"
   ],
-  "license": "AGPL-3.0-or-later",
+  "license": "Apache-2.0",
   "engines": {
     "node": ">=18.0.0"
   },

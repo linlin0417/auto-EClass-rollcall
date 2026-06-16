@@ -1,513 +1,112 @@
-# Auto-Rollcall-thu-Tronclass
+# AutoRollCall (Node.js Version)
 
-**TronClass 校園點名系統的全自動點名工具｜支援東海 (THU)「iLearn」、淡江 (TKU)「iClass」、東吳 (SCU)「TronClass」、輔仁 (FJU)「TronClass」**
+[![npm version](https://img.shields.io/npm/v/auto-rollcall-thu-tronclass.svg)](https://www.npmjs.com/package/auto-rollcall-thu-tronclass)
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-登入學校帳號後，它會在你設定的上課時段自動盯著課程，一偵測到點名就替你完成簽到——你不用一直盯著手機，也不用手忙腳亂找點名碼。
+**TronClass 校園點名系統的全自動點名工具 (Clean Room Node.js 版本)**
 
-> ⚠️ 請只在你自己有權限、且符合學校與課程規範的情況下使用。**不要把填好帳密的 `config.conf`、cookie、`state/`、`log/` 傳給任何人。**
+這是一個專門為 TronClass 系統打造的自動點名監控與簽到工具。此版本已全面使用 JavaScript (Node.js) 徹底重構，並以 **Apache 2.0** 授權釋出，提供更輕量、更高擴充性的架構，且完美支援作為 NPM 依賴被其他專案引入。
 
-## 致謝與來源
+此專案內附的 Python 版本程式碼（包含 CLI Bot、各種通知適配器與 PyQt 介面）仍然保留在專案根目錄中，但該部分的授權維持 **AGPL-3.0**。
 
-本專案 fork 自 [silvercow002/tronclass-script](https://github.com/silvercow002/tronclass-script)，並在此基礎上大幅延伸為支援 THU/TKU/SCU/FJU 使用情境的版本。  
-Python原代碼由[hot-YUser/auto-rollcall-thu-tronclass](https://github.com/linlin0417/auto-EClass-rollcall)編寫，並以此作為藍圖重構出javaScript版本，發布在npm上。
-
-完整來源、原作者 MIT License notice 與本專案授權說明已併入本文件末尾的「致謝與來源 (Credits)」一節。
+> 請只在你自己有權限、且符合學校與課程規範的情況下使用。
 
 ---
 
-## 這個工具可以幹嘛
+## 主要特色
 
-- **數字點名** — 完整支援。已經過無數次實際課堂驗收與打磨，是成熟、穩定的全自動完成版：偵測到點名 → 自動拿到點名碼 → 自動簽到，全程零操作。
-- **雷達點名** — 完整支援。同樣經過大量實戰驗收，偵測到雷達點名後會自動完成定位簽到，不需要你開地圖、不需要對座標。就算哪天伺服器補掉了現在的捷徑，背後還有一套我自己寫的**「全球定位演算法」（WGS84 多點定位）**能反推教室座標頂上，不會因此失效。
-- **QR Code 點名** — 預設支援手動貼上 / 剪貼簿輔助；若你另外提供一個有權限發起 QR 點名的 TronClass 教師帳號，可啟用「教師輔助」自動完成、全程零操作。
-
-> 順帶一提，它不會「搶當第一個簽到的人」：偵測到點名後，會先確認這是一場真的、全班性的點名（已經有一定比例的同學陸續簽到）才出手，避免老師只是手滑誤開、又馬上關掉的「假點名」也把你簽進去。這是一道貼心的容錯保險，預設就開著、你什麼都不用設。
-
-關於 QR：學生端 API 不會提供 QR 的 `data` token，所以未設定教師帳號時，程式只會提示你貼上 QR 內容或嘗試剪貼簿輔助。教師輔助模式會使用你自備的教師帳號即時發起一場 QR 點名取得 `data`，再用學生帳號送出；教師登入失敗不會影響數字 / 雷達點名。
-
-**內建支援的學校：東海大學 (THU)、淡江大學 (TKU)、東吳大學 (SCU)、輔仁大學 (FJU)，以及 TronClass 公有雲官網。** 這幾所只要填「學校代號」就會自動登入，數字、雷達都完整可用。
-
-> **輔仁 (FJU) 的登入頁有 4 碼數字圖形驗證碼**：程式用本地離線 OCR 自動辨識。為了讓主程式保持輕量，**打包版（exe）首次用到 FJU 時才自動下載 OCR 附加元件**（辨識引擎＋模型，與瀏覽器登入用的驅動打包成同一個下載檔，只下載一次）；原始碼安裝請加裝 `pip install -e .[ocr]`。下載不到時自動退回「手動瀏覽器登入」一次後沿用 cookie，其餘點名功能完全相同。
-
-> **你的學校不在上面清單裡？也能用——把網址貼進設定就行。** 只要你的學校同樣是 TronClass 系統（網址長得像 `https://tronclass.你的學校.edu.tw` 或 `https://ilearn.…`、`https://iclass.…`），把那個網址填進設定，程式就會幫你開一個瀏覽器視窗、讓你像平常一樣手動登入，登入成功後它就接手自動盯點名。**不必把密碼寫進設定檔**，也不必會寫程式。詳見下面〈設定檔教學〉的「我的學校不在清單裡？」一節。
-
-> 補充一個常見的誤會：TronClass 是一套被很多學校採用的校園系統，但**各校上架時都會自己取名**——在東海它叫「iLearn」、在淡江叫「iClass」、東吳大學和 TronClass 公有雲官網則直接叫「TronClass」。名字不一樣，骨子裡卻是同一套 API；所以同一套登入＋點名流程，只要換掉網域與登入方式，就能套到不同學校。
+- **數字點名 (PIN Auth)**：內建多線程非同步暴力破解（0000-9999），偵測到點名自動算出並送出正確的點名碼。
+- **雷達點名 (Geo Auth)**：內建基於 `@turf/turf` 與 `ml-levenberg-marquardt` 的全球定位演算法，能精確解算並自動定位打卡。
+- **NPM 友善與模組化 (Modularized)**：抽離所有的 `console.log`，支援依賴注入 (Dependency Injection) 的 Logger，極度適合整合進 Discord Bot 或其他自動化系統。
 
 ---
 
-## 怎麼開始用
+## 安裝方式
 
-### 透過 NPM 安裝 (純 JS 最新跨平台版本)
+您必須先在電腦上安裝 **Node.js (v18 或以上)**。
 
-我們已經將核心邏輯重構為純 JavaScript 專案，並發布到 npm！只要您的電腦有安裝 Node.js (v18+)：
+打開終端機，執行以下指令將工具全域安裝：
 
-1. **全域安裝**：
 ```bash
 npm install -g auto-rollcall-thu-tronclass
 ```
-2. **啟動點名監控**：
+
+---
+
+## 快速啟動
+
+在任意資料夾中建立一個 `config.yaml` 檔案，用來設定您的學校與帳號：
+
+```yaml
+provider:
+  base_url: "https://ilearn.thu.edu.tw" # 替換成您學校的 TronClass 網址
+
+accounts:
+  current: "default"
+  profiles:
+    default:
+      user: "您的學號"
+      passwd: "您的密碼"
+
+monitor:
+  interval: 15 # 輪詢間隔 (秒)
+```
+
+建立好檔案後，在同一個資料夾底下執行：
+
 ```bash
 trothu run
 ```
 
-> 第一次啟動時，它會在當前目錄讀取或請您建立 `config.yaml` 讓您填寫帳號密碼，載入後就會自動開始無限輪詢點名。
+程式就會自動登入，並開始在背景無窮迴圈監控點名。
 
 ---
 
-### 下載免安裝版（Windows Python 版，舊版相容）
+## 開發者：作為 NPM 模組引入
 
-1. 到 Releases，**只下載主程式這一個檔**：**`THU_Auto_Rollcall-v1.5-alpha.2-windows-x64.zip`**。
-2. **整包解壓縮**到一個固定資料夾（不要在 zip 裡直接雙擊）。
-3. 進到資料夾，執行 `auto-rollcall-thu-tronclass.exe`。
+此版本 (v3.0.0+) 已被設計為可以輕鬆作為底層依賴。您可以這樣將它整合進自己的 Node.js 專案：
 
-> 📌 **下載哪個檔？** Releases 頁面會有兩個壓縮檔，請認清：
-> - ✅ **主程式（要下載這個）**：`THU_Auto_Rollcall-v1.5-alpha.2-windows-x64.zip` —— 解壓後執行裡面的 exe。
-> - ➕ **附加元件（通常不用手動下載）**：`addons-v1.5a2-win.zip` —— 只有「輔大 FJU 辨識驗證碼」或「手動瀏覽器登入」會用到，程式**需要時會自動下載**。**它不是程式本體、不要直接執行**；只有在自動下載失敗（如網路受限）時，才手動下載它、放到 exe 旁邊或 `state\addons\` 即可（程式會自動採用，不再重抓）。
+```javascript
+const { CampusNetworkAgent } = require('auto-rollcall-thu-tronclass/src/lms-agent/agent');
+const { AttendanceWatcher } = require('auto-rollcall-thu-tronclass/src/attendance-tasks/watcher');
 
-第一次啟動會在 exe 旁邊自動建立 `config.conf`、`config.advanced.toml`、`state/`、`log/` 四樣東西。程式一啟動就直接進入監控；**按任意鍵**就會用記事本打開 `config.conf` 讓你填帳號密碼，存檔關掉記事本後它會自動重新讀取設定。
+// 傳入您自訂的 Logger (例如 winston 或 irika-Logger-System)
+const myLogger = require('irika-Logger-System');
 
-### 我想用 Python 原始碼跑（開發者）
+const config = {
+  base_url: 'https://ilearn.thu.edu.tw'
+};
 
-如果您想執行完整的 Python 舊版原始碼（包含所有測試、Bot 功能與進階工具），裝好相依套件就能直接跑，不用自己打包：
+const agent = new CampusNetworkAgent(config, { logger: myLogger });
+const watcher = new AttendanceWatcher(agent, { logger: myLogger, interval: 15 });
 
-```bash
-python -m pip install -e .
-python -m troTHU.tron
-```
+async function start() {
+  await agent.authenticate('user', 'pass');
+  await watcher.start();
+}
 
-就這樣。一樣是啟動即監控、按任意鍵用記事本開 `config.conf`。
-
-如果你要放在工作排程器或背景服務、不希望它監聽按鍵：
-
-```bash
-python -m troTHU.tron run --no-input
-```
-
-> 啟動後它**不會清螢幕、不會跳全螢幕介面**，只會在視窗裡一行一行印出目前在做什麼（正在登入、目前時段、偵測到點名、簽到成功…），讓你一眼看出它還活著。
-
----
-
-## 設定檔教學（最重要的一步）
-
-九成的人會卡在這裡，所以講仔細一點。
-
-### 新版格式特色（乾淨明瞭、不易出錯）
-
-- **純 JS NPM 版本**：主要透過目錄下的 `config.yaml` 來配置帳號與行為。
-- **Python 版**：把設定拆成兩個檔，都不再使用容易改錯的 YAML：
-  - **基本檔 `config.conf`**：為新手設計的純文字格式，放帳密與課表。
-  - **進階檔 `config.advanced.toml`**：標準 TOML 格式，固定、嚴謹、不易出錯，放各種微調參數。
-
-*(以下說明以 Python 版 `config.conf` 為例，JS 版的 `config.yaml` 結構與其概念相似。)*
-
-### 基本設定 `config.conf` 範例與逐塊說明
-
-```text
-# ===== 基本設定 config.conf =====（改完存檔關閉記事本即自動套用）
-# now：要用哪個帳號跑？填某帳號的 user，或填「class 群組名」。只有一個帳號可留空。
-#       也可以直接填學校網址（如 https://tronclass.你的學校.edu.tw）→ 改用手動瀏覽器登入，免填帳密。
-now = 
-
-# [account] 你的帳號，要幾個就放幾塊。
-#   school 填學校代號就自動登入：THU / TKU / TRONCLASS / SCU / FJU。
-#   school 也可以填學校「網址」→ 改用手動瀏覽器登入，passwd 可留空（你會在跳出的瀏覽器裡自己登）。
-[account]
-user = s1234567
-passwd = mypassword
-school = THU
-
-# [group]（選用）一人偵測、全員簽到。members 用逗號列出同組 user，再把上面 now 填成「class A」
-[group]
-class = A
-school = THU
-members = s1234567, s7654321
-
-# [teacher]（選用）QR 教師輔助帳號。course 留空會自動抓第一門課
-[teacher]
-user = teacher_account
-passwd = teacher_password
-school = TRONCLASS
-course = 
-
-# [operating] 上課時段：一天一塊；day 用 0=日 1=一 … 6=六；times 用逗號分隔多段
-[operating]
-day = 1
-enable = true
-times = 09:10-12:00, 13:20-17:30
-```
-
-**`now`** — 現在要用哪個帳號。可以填某個帳號的學號（例如 `now = s1234567`），也可以填一個群組（例如 `now = class A`）。**也可以直接填一個學校網址**（例如 `now = https://tronclass.你的學校.edu.tw`）——這時程式會跳過設定檔裡的帳號，直接開瀏覽器讓你手動登入那個網站（見下面「我的學校不在清單裡？」一節）。
-> 小撇步：如果你整份 `config.conf` 只填了一個有效帳號，`now` 可以**留空**，程式會自動用那一個，不會逼你再填一次。
-
-**`[account]`** — 你的帳號區塊，要幾個帳號就自己複製多個區塊。每個區塊包含 `user`（學號/帳號）、`passwd`（密碼）與 `school`（學校）。`school` 有兩種填法：
-- **填學校代號 → 自動登入**：`THU` / `TKU` / `TRONCLASS` / `SCU` / `FJU`。這時程式用你填的 `user` + `passwd` 自動登入，全程零操作。也接受中文別名（例如 `帳號 = s1234567`、`密碼 = mypassword`、`學校 = 東海` 或 `學校 = 輔仁`）。輔仁 (FJU) 的登入驗證碼由 OCR 自動辨識（打包版首次用到時自動下載附加元件；原始碼安裝用 `pip install -e .[ocr]`）。
-- **填學校網址 → 手動瀏覽器登入**：`school = https://tronclass.你的學校.edu.tw`。這時 `passwd` 可以留空，程式會開一個瀏覽器視窗讓你自己登（見下一節）。
-
-**`[group]`** — （進階／選用）群組設定。群組功能可以「一人讀碼、全員簽到並確認 on_call_fine」。`class = A` 代表群組名稱為 A，`members` 用逗號列出該群組的成員帳號。
-
-**`[teacher]`** — （選用）QR 教師輔助帳號。`user` / `passwd` 是教師帳密，`school` 可填 `TRONCLASS`、`THU`、`TKU`；`course` 留空時會自動挑選第一個課程。
-
-**`[operating]`** — 上課時段，也就是「什麼時候才需要自動盯點名」。每一天用一個區塊設定：
-- `day`：**`0` = 星期日、`1` = 星期一 … `6` = 星期六**。
-- `enable`：`true` 代表這天啟用盯點名，`false` 代表不啟用。
-- `times`：用逗號分隔多個時段，時段格式為 `開始時間-結束時間`。例如 `times = 09:10-12:00, 13:20-17:30`。
-
-### 我的學校不在清單裡？貼上網址就能用（手動瀏覽器登入）
-
-內建支援的學校（THU / TKU / SCU / TronClass 公有雲）填代號就能自動登入。但只要你的學校也是 **TronClass 系統**，就算它不在清單裡，你一樣可以用——**把學校網址貼進設定，改用「手動瀏覽器登入」即可**。這是為了那些有特殊登入頁（多重驗證、學校自己的 SSO、圖形驗證碼…）而無法自動登入的學校準備的萬用後路：自動登不進去的，就讓你自己在瀏覽器裡登一次。
-
-**怎麼判斷我的學校能不能用？** 用學校帳號登入你們的校園系統，如果登入後網址列長得像 `https://tronclass.xxx.edu.tw`、`https://ilearn.xxx.edu.tw`、`https://iclass.xxx.edu.tw` 這類，那多半就是 TronClass，可以一試。
-
-**怎麼設定？** 兩種寫法擇一，把「學校代號」換成「學校網址」就好：
-
-```text
-# 寫法 A：直接把 now 填成學校網址（最簡單，連 [account] 都不用）
-now = https://tronclass.你的學校.edu.tw
-```
-
-```text
-# 寫法 B：在 [account] 裡把 school 填成網址，passwd 留空
-now =
-[account]
-user =
-passwd =
-school = https://tronclass.你的學校.edu.tw
-```
-
-> 把網址換成你學校系統的「首頁網址」就好（開頭的 `https://` 與網域那段，例如 `https://tronclass.asia.edu.tw`）；後面那串路徑（像 `/user/index`）填不填都沒關係，程式會自動處理。
-
-**接下來會發生什麼事（一步一步）：**
-
-1. **第一次使用會自動下載瀏覽器。** 手動登入需要一個乾淨的 Chromium 瀏覽器，程式會在你第一次用到時自動下載（約 150MB，只下載這一次，存在程式旁邊的 `state/browser/`）。下載開始與完成各會印一行訊息，過程中的百分比會顯示在狀態列，不會刷一堆字。打包版 exe 已內建相關元件，你不必自己裝任何東西。
-2. **跳出一個瀏覽器視窗。** 程式會印出「已開啟手動登入瀏覽器，請在瀏覽器視窗中完成登入…」，並開啟一個 Chrome 視窗、自動連到你學校的登入頁。
-3. **像平常一樣登入。** 在那個視窗裡輸入你的帳號密碼（需要簡訊 / OTP / 圖形驗證碼也照做），登到能看到課程主頁為止。**你的密碼是輸入在瀏覽器裡的，不會、也不需要寫進設定檔。**
-4. **程式自動接手。** 它偵測到你登入成功後，會自動把瀏覽器關掉、收下登入狀態，接著就跟自動登入一樣開始盯點名了。登入成功的狀態會被記住（cookie 快取），之後再開通常不必每次都重登。
-
-> 小提醒：手動登入視窗有 **5 分鐘**的時間，從容登入即可；逾時或你自己把視窗關掉，程式會視為這次沒登成、稍後再試。如果開了視窗卻一直沒反應，確認你最後有真的登進「課程主頁」（有些學校登入後會先停在公告頁，往課程頁再點一下即可）。
-
-> 「填代號」和「填網址」差在哪？**填代號 = 走自動登入**（程式幫你打帳密）；**填網址 = 一律走手動登入**（你自己在瀏覽器登）。所以就算是已內建的東海，只要你把 `ilearn.thu.edu.tw` 當網址填進去，也會切成手動登入——這是刻意的，方便自動登入偶爾卡關時，隨時有手動這條路可走。
-
-### 改完設定後
-
-填好帳密、存檔、關掉記事本，程式就會自動重新讀取。如果你改了 `now`，它會清掉目前的登入狀態並切換到新帳號或新群組。
-
-填密碼那關如果你不想把明碼直接寫進 `config.conf`，也可以改用環境變數、或安裝 `.[keyring]` 之後用系統金鑰圈保存（進階用法，見後面）。
-
-### 常用設定指令
-
-```bash
-python -m troTHU.tron config show       # 看目前讀到的設定
-python -m troTHU.tron config doctor      # 檢查設定有沒有問題
-python -m troTHU.tron config advanced    # 用記事本打開 config.advanced.toml
-```
-
-`config.advanced.toml` 採用標準 **TOML** 格式，放時區、number/radar 細部調整、Bot 設定等。它會在第一次啟動時**自動產生，並列出所有可調整的項目與其預設值（每項都附中文說明）**，所以你不必去猜有哪些選項可以改——打開檔案照著改就好。不確定就別動；若不小心改壞（例如刪掉引號），這份進階設定會整個回到預設值，但完全不影響 `config.conf`。例如：
-
-```toml
-# 時區設定
-[time]
-timezone = "Asia/Taipei"
-
-# 監控行為
-[monitor]
-# true = 一偵測到點名就立刻簽到，跳過「全班到課率達 15%」的保險
-ignore_attendance_rate_gate = false
-
-# 雷達點名參數
-[radar]
-# 雷達策略：empty_answer（空答案優先）或 global_wgs84（全球定位求解）
-strategy = "empty_answer"
-
-[radar.global]
-max_queries = 120
-standard_radii_meters = [10000.0, 3000.0, 1000.0, 300.0, 100.0]
+start();
 ```
 
 ---
 
-## 聊天機器人通知（選用，但很好用）
+## 關於舊版 Python (AGPLv3)
 
-不想一直開著視窗看？可以把點名結果丟到聊天軟體。Bot 這塊目前做得相當完整，三種都支援，token/密鑰一律只從環境變數讀，不會寫進 log。
+原本的 Python 舊版程式碼（包含 CLI Bot、各種通知適配器與 PyQt 介面）仍然保留在專案根目錄中，但該部分的授權維持 **AGPL-3.0**。
 
-### Discord（推薦）
-
-推薦用 **HTTP Interactions**（不用一直掛著連線，部署最省事）：
-
-```bash
-python -m troTHU.tron bot discord-schema --json      # 看要註冊哪些指令
-python -m troTHU.tron bot discord-sync --dry-run --json
-python -m troTHU.tron bot serve --adapter discord    # 本機起服務
-```
-
-也保留了選用的 Gateway 模式，但不是預設推薦的部署方式。
-
-### LINE
-
-支援 webhook 簽章驗證、回覆與推播通知。常用環境變數：
-
-```text
-LINE_CHANNEL_ACCESS_TOKEN
-LINE_CHANNEL_SECRET
-```
-
-### Telegram
-
-目前是**單向通知**（程式 → 你），把結果推給你看；不提供從 Telegram 反向下指令。綁定方式：
-
-```bash
-python -m troTHU.tron account bind telegram <你的 TELEGRAM_CHAT_ID> default
-```
-
-### 想先在本機試 webhook？
-
-```bash
-python -m troTHU.tron bot serve --adapter generic
-```
-
-送個最簡單的測試請求：
-
-```json
-{"source_user_id":"user-id","channel_id":"local","text":"status"}
-```
+如果您需要查看 Python 版本的說明或安裝方式，請參閱：
+ **[README-Python.md](./README-Python.md)**
 
 ---
 
-## 其他功能
+## 致謝與來源 (Credits)
 
-- **多帳號 / 群組**：一份設定管多個學號，用 `now` 一鍵切換（見上面 config 教學）。
-- **時區排程**：`config.advanced.toml` 裡可設 IANA 時區（如 `Asia/Taipei`），每天可有多個時段。
-- **本機唯讀面板**：`python -m troTHU.tron app serve --open` 會在 localhost 開一個唯讀的小面板，只能「看」狀態（不會送點名、不會匯入 cookie、不會改帳號）。
-- **環境自我檢查**：`python -m troTHU.tron doctor` 一鍵檢查環境、設定、登入來源是否正常。
-- **狀態快照**：`python -m troTHU.tron status --json` 印出目前本機狀態。
+雖然此 Node.js 版本完全重新編寫了架構、邏輯與演算法，以消除 AGPL 傳染性並採用 Apache 2.0 授權，但本專案最初的核心 API 逆向工程與靈感，皆源自於原作者的開源貢獻。
 
----
+特別感謝原專案作者：
+- **Original author**: [@silvercow002](https://github.com/silvercow002)
+- **Original project**: [silvercow002/tronclass-script](https://github.com/silvercow002/tronclass-script) (MIT License)
+- **衍生專案**: [hot-YUser/auto-rollcall-thu-tronclass](https://github.com/hot-YUser/auto-rollcall-thu-tronclass) (AGPL-3.0 License)
 
-## 原理：它到底是怎麼自動簽到的？
-
-這段用白話講「為什麼做得到」。本質上，TronClass 這套系統把一些**本來不該讓學生拿到的東西，透過學生自己就能呼叫的 API 漏掉了**，這個工具就是把這些漏洞自動化而已。
-
-### 偵測到點名後，為什麼先等一下再簽
-
-預設情況下，程式偵測到點名後**不會立刻送出**，而是先回查這堂課的簽到率，等到「全班到課率達 15%」（已經有 15% 的同學簽到）才出手。這是一道刻意設計的容錯保險：萬一老師只是手滑誤開、開了又馬上關掉，這種根本沒人簽的「假點名」就不會把你簽進去；等到班上開始有人陸續簽到、確認是真的在點名了，程式才動作。數字 / 雷達 / QR 三種都適用（QR 會在等待期間先用教師帳號把點名預備好，門檻一過立刻送出）。
-
-如果你不想要這道保險、希望一偵測到就立刻簽到，到 `config.advanced.toml` 把 `monitor.ignore_attendance_rate_gate` 設成 `true` 即可（開發 / 排程場景也可以用 `python -m troTHU.tron run --ignore-attendance-rate-gate` 臨時關閉這一輪）。
-
-### 數字點名：點名碼其實藏在 API 回應裡
-
-老師按下數字點名後，會在螢幕投影一組四位數字要大家輸入。問題是：**學生端有一支 API（`student_rollcalls`）會直接把這組正確的點名碼回給你**。所以這個工具偵測到數字點名後，直接去讀那組碼、一發送出就完成——正常情況下一次點名只要極少的請求。
-
-萬一哪天那支 API 不給碼了，還有後備方案：四位數字也才 0000–9999 一萬種，直接暴力試碼（有限流冷卻、不會把伺服器打爆），所以**不會退化、依然會成功**。
-
-### 雷達點名：送一個「空答案」就過了
-
-雷達點名理論上要驗證你的 GPS 座標在教室範圍內。但實測發現一個明確的伺服器漏洞：**對點名送出一個完全空的答案 `{}`（不帶任何座標），伺服器就直接把你判定為「到場」。** 這招實測 100% 成功，所以是預設、也是主力做法——送出後再回查一次確認真的簽到成功才算數。
-
-### 雷達備援：自己寫的全球定位演算法
-
-萬一哪天「空答案」這個捷徑被伺服器補掉，雷達點名也不會就此失效——後面還接著一套我自己刻的定位備援，這也是這個專案裡花最多心思的一塊：
-
-它利用一個有趣的特性：**當你送出的座標答錯時，伺服器會好心地回傳「你離目標還有多遠」。** 程式把這個「距離」當成觀測量，朝不同方位、不同距離撒出多圈探測點，收集到一組「在這個點距離教室約 N 公尺」的資料後，就能在 WGS84 地球橢球座標系上用最小平方法做**多點定位（multilateration，多邊測距定位）**，反推出教室的精確經緯度，再把那個座標送出去簽到。求解用的是抗離群值的穩健最小平方搭配 pattern-search 迭代收斂；真的還收斂不出來，才退到最後一招——以估計點為中心、一圈一圈無限往外擴的棋盤格逐格掃描，直到命中或點名結束。
-
-特別說明：這整套定位是**純手工打造、零外部數學套件**（不依賴 numpy / scipy），所以能直接打包進單一個 exe 裡跑。它平常幾乎輪不到出場（空答案就解決了），但它是貨真價實、能獨立運作的定位引擎，不是擺著好看的。
-
-### QR 點名：手動內容或教師帳號輔助
-
-QR 點名的學生端 API 只接受 `data` + `deviceId`，但**不會**把 `data` 回給學生，所以一定得從別的地方拿到那串 `data`。
-
-未設定教師帳號時，程式保留三條手動路徑：直接貼上 QR 內容、用本機掃描器、或從剪貼簿自動帶入送出（要從圖片解碼 QR 需另裝 `qr-image` 套件）。
-
-設定 `teacher` 後就能全自動：程式一偵測到 QR 點名，會先用教師帳號**預備好**一場教師端 QR 點名（趁等待簽到率門檻的同時就先備著）；輪到可以送出時，讀取教師端 `qr_code` API 那串**會定時輪換（約每 15 秒）**的 `data`，立刻送出學生端 QR answer，並在確認窗口內反覆刷新、重送，直到回查 `student_rollcalls` 確認自己已 `on_call_fine`（簽到成功），最後把教師端那場點名關掉。整個過程不需要你動手。
-
----
-
-## 技術細節（給想複製到其他學校的開發者）
-
-TronClass 是不少學校共用的底層校園系統（各校自行命名上架：東海＝iLearn、淡江＝iClass、公有雲＝TronClass…），下面整理核心 API 與做法，方便其他同樣用 TronClass 的學校快速理解、自行實作。除了 THU / TKU，這套 runtime 也能套用在 **TronClass 公有雲官網**以及其他基於 TronClass 的學校（換掉 base URL 與登入流程即可）。
-
-> 端點以 `{base}` 代表學校的 TronClass 網域（東海 `https://ilearn.thu.edu.tw`、淡江 `https://iclass.tku.edu.tw`…）。所有請求都帶登入後的 session cookie。
-
-### 列出目前的點名
-
-```http
-GET {base}/api/radar/rollcalls?api_version=1.1.0
-```
-
-回傳目前進行中的點名清單與類型（number / radar / qr），程式據此分流處理。
-
-### 數字點名（越權讀碼 + 後備暴力）
-
-```http
-# 1) 直接讀出正確點名碼（關鍵：這支學生就能呼叫）
-GET {base}/api/rollcall/{rollcall_id}/student_rollcalls
-    → 回應內含 number_code 欄位
-
-# 2) 送出簽到
-PUT {base}/api/rollcall/{rollcall_id}/answer_number_rollcall
-    body: {"deviceId": "<隨機>", "numberCode": "0837"}
-```
-
-讀不到 `number_code` 時，就對 `answer_number_rollcall` 以 `0000`–`9999` 批次併發試碼（含限流冷卻與降併發）。
-
-### 雷達點名（空答案漏洞 + 距離反推備援）
-
-```http
-# 主力：空答案即過（伺服器漏洞）
-PUT {base}/api/rollcall/{rollcall_id}/answer
-    body: {}
-# 送出後回查 rollcall 狀態，確認為 on_call_fine（已簽到）才採信。
-
-# 備援：帶座標的答案；答錯時回應會夾帶「距離目標多遠」
-PUT {base}/api/rollcall/{rollcall_id}/answer?api_version=1.76
-    body: { ...座標、device、user 等... }
-GET {base}/api/rollcall/{rollcall_id}/lite   # 取得 beacon / 訊號等附帶資訊
-```
-
-備援解法把「距離」當觀測量，用穩健最小平方法在 WGS84 上做多點定位反推教室座標，再不行則以無限棋盤格逐格覆蓋。雷達策略鏈為 **`empty_answer → global_wgs84`**（由 `config.advanced.toml` 的 `radar.strategy` 選擇，預設 `empty_answer`）；全球定位求解器在 `troTHU/global_radar_solver.py`，是零數學套件依賴的純 Python 實作。
-
-### QR 點名（教師輔助取得 data）
-
-```http
-# 教師帳號建立 / 啟動一場 QR 點名
-POST {teacher_base}/api/course/{course_id}/rollcall
-POST {teacher_base}/api/rollcall/{teacher_rollcall_id}/start-rollcall
-
-# 教師端讀取動態 QR data
-GET {teacher_base}/api/course/{course_id}/rollcall/{teacher_rollcall_id}/qr_code
-    → 回應內含 data
-
-# 學生帳號送出原本課堂的 QR 點名
-PUT {student_base}/api/rollcall/{student_rollcall_id}/answer_qr_rollcall
-    body: {"data": "<teacher data>", "deviceId": "<隨機>"}
-
-# 不論成功失敗都關閉教師端點名
-PUT {teacher_base}/api/rollcall/{teacher_rollcall_id}/stop_qr_rollcall
-```
-
-送出後會再讀學生端 `student_rollcalls` / `answers` 確認狀態。教師帳號登入失敗或找不到課程時，只會停用 QR 教師輔助，數字與雷達點名仍照常監控。
-
-### 程式結構速覽
-
-- `troTHU/runtime_context.py`：中央樞紐，持有全域執行狀態，並把扁平的函式命名空間懶載入到各模組。新增要能用 `ctx.foo` 呼叫的函式時，要在這裡的 `_LEGACY_EXPORTS` 註冊。
-- `troTHU/monitor_runtime.py`：預設的監控主迴圈（登入 → 依排程 → 偵測點名 → 分流）。
-- `troTHU/number_runtime.py`、`troTHU/radar_runtime.py`：兩種點名的實作核心（上面的 API 就在這裡）；雷達的全球定位求解器另放在 `troTHU/global_radar_solver.py`（純 Python WGS84 多點定位）。
-- `troTHU/qr_runtime.py`、`troTHU/qr_teacher_runtime.py`：QR 手動 / 剪貼簿送出與教師帳號輔助流程。
-- `troTHU/providers.py`：支援的學校登錄表（base URL、`auth_flow`、能力旗標）。沿用既有登入流程的新學校，從這裡加一筆即可，甚至可純用 `config.advanced.toml` 的 `[provider.available.<校名>]` 定義，完全不必改程式。
-- `troTHU/login_adapters.py`：以 `auth_flow` 為鍵的「登入頁 adapter」登錄表（CAS / TKU SSO / 公有雲 email / 純 cookie 匯入 / 互動瀏覽器手動登入）。有獨特登入頁的新學校，只需新增一個 adapter；登入狀態判讀、錯誤提示、session 驗證等共用流程都已統一，不必再碰。
-- `troTHU/tron_http.py`：端點驅動的 HTTP client；`fetch_login_form` / `submit_login` 會依 `auth_flow` 委派給對應的 login adapter。
-- `troTHU/auth_runtime.py`：與學校無關的登入主流程（cookie 還原、送出、API session 驗證、瀏覽器後備、各種狀態與提示）。
-
-### 新增一所學校（給開發者）
-
-「多學校系統」刻意設計成新增學校的成本極低。最省事的一條其實連開發者都不必當：**任何 TronClass 學校，使用者只要在 `config.conf` 把 `school` 或 `now` 填成該校網址，就會自動走「互動瀏覽器手動登入」（`auth_flow = interactive_browser`），免改任何程式或設定檔**（細節見上面〈我的學校不在清單裡？〉一節）。若想做到「填代號就自動登入」而非每次手動，再依登入方式選下面三條路之一：
-
-**途徑一：沿用既有登入流程（最常見）。** 新學校登入頁若與東海 CAS（`thu_cas`）、淡江 SSO、公有雲 email 其中一種相同，有兩種作法：
-
-- *永久新增（適合送 PR）*：在 `troTHU/providers.py` 的 `PROVIDERS` 加一筆 `ProviderDefinition`，並在 `PROVIDER_ALIASES` 補上中英文別名。
-  ```python
-  "scu": ProviderDefinition(
-      key="scu",
-      label="Soochow University TronClass",
-      base_url="https://tronclass.scu.edu.tw",
-      login_url="https://tronclass.scu.edu.tw/cas/login?...",
-      auth_flow="thu_cas",
-      capabilities=ProviderCapabilities(number=True, radar=True, qrcode=True, ...),
-  ),
-  ```
-- *純設定檔新增（本機擴充、完全不動程式碼）*：在 `config.advanced.toml` 加一個區塊，再於 `config.conf` 把 `school` 填成同一個名字，所有 API 端點會自動推導。
-  ```toml
-  [provider.available.my_school]
-  base_url = "https://tronclass.my-school.edu.tw"
-  auth_flow = "thu_cas"
-  ```
-  ```conf
-  school = my_school
-  ```
-
-**途徑二：全新登入頁面（寫一個 Adapter）。** 該校若有獨特的 SSO 流程（像淡江 `tku_sso_browser`），在 `troTHU/login_adapters.py` 繼承 `LoginAdapter` 實作 `fetch_login_form` / `submit_login`，以 `auth_flow` 為鍵註冊進 `_adapters_by_flow`，再把 provider 的 `auth_flow` 指到它。登入狀態判讀、錯誤提示、session 驗證、瀏覽器後備都已統一，不必再碰。
-
-```python
-class MySchoolLoginAdapter(LoginAdapter):
-    auth_flow = "my_school_sso"
-    prefers_browser_assisted_login = True   # 必要時呼叫瀏覽器輔助
-    requires_api_session_validation = True  # 登入後是否驗證 API session
-
-    async def fetch_login_form(self, client) -> LoginForm: ...
-    async def submit_login(self, client, form, username, password) -> LoginOutcome: ...
-```
-
-**途徑三：純 Cookie 匯入（免寫任何登入邏輯）。** 想直接從瀏覽器讀 cookie、跳過密碼登入：把該校 `auth_flow` 設成 `manual_cookie_only`，啟用進階設定的 `webview`，再用指令匯入。系統會在匯入當下與每次執行時自動向該校 API 驗證 session，確保 cookie 有效、不怕靜默過期。
-
-```toml
-[provider.available.scu]
-base_url = "https://tronclass.scu.edu.tw"
-auth_flow = "manual_cookie_only"
-```
-```bash
-python -m troTHU.tron webview import --input <cookie-json-path> --save
-```
-
-### 安裝選用功能（原始碼）
-
-```bash
-python -m pip install -e .[packaging]   # PyInstaller 打包
-python -m pip install -e .[browser]     # Playwright（登入頁改版時的後備登入）
-python -m pip install -e .[keyring]     # 用系統金鑰圈存帳密
-```
-
----
-
-## 開發與測試
-
-測試全部離線執行（用假的 TronClass 伺服器模擬），不會碰到任何真實學校：
-
-```bash
-python -m py_compile troTHU/tron.py troTHU/runtime_context.py troTHU/cli_main.py
-python -m unittest discover -v
-python -m troTHU.tron release-build --dry-run --json
-```
-
----
-
-## 目前限制
-
-- **QR 教師輔助需要可登入且可發起點名的教師帳號**；未設定或登入失敗時，只保留手動貼上 / 剪貼簿輔助。
-- **Telegram 只做單向通知**，不接收指令。
-- **非內建學校（貼網址）走手動瀏覽器登入**：要你親自在跳出的瀏覽器裡登入一次（之後靠 cookie 快取通常不必每次重登），不像內建學校那樣連登入都全自動。盯點名與自動簽到的部分則完全相同。
-- 預設的 Windows zip 內建 Playwright 登入輔助套件（瀏覽器二進位檔於首次使用時按需自動下載，約 150MB）；keyring、QR 影像解碼等其他選用功能則不內建，需要的話請用原始碼安裝對應 extras。
-
----
-
-## 授權與使用者規範 (AGPL-3.0)
-
-本專案以 **GNU Affero General Public License v3.0 或更新版本** (`AGPL-3.0-or-later`) 授權。詳見 [LICENSE](LICENSE)，原始基礎架構來源與原 MIT 授權聲明已併入本文件末尾的「致謝與來源 (Credits)」一節。
-
-### 💡 簡單科普：從 MIT 轉為 AGPLv3 代表什麼？
-
-原專案採用的 **MIT 授權**非常寬鬆，基本上是「隨你怎麼改、怎麼賣都行」。而本專案延伸修改後，正式轉為 **AGPLv3 授權**，這是一個**「強感染性」的開源協議**：
-
-1. **自己用（本機執行）**：如果你只是下載本專案，自己在電腦上執行點名監控，**不受任何限制**，你不需要公開任何東西。
-2. **修改後「分發」或「提供網路服務」**：如果你修改了本專案的程式碼，並將其：
-   - **傳給別人使用**（分發修改版執行檔或原始碼）
-   - **架設在網路上給別人用**（例如：架設成公開/私人的 Telegram 點名機器人服務、Web 網頁端服務等）
-   - ⚠️ **你必須無條件將你修改後的完整原始碼，以 AGPLv3 協議開源公開**，並提供管道讓使用者下載。
-3. **禁止私有化與改名割韭菜**：你**不能**將本專案改改名稱、隱藏原始碼後，包裝成自己的收費軟體或閉源工具提供給他人。
-
-### 🤝 請大家潔身自愛、遵守規範
-
-開源社群的發展建立在彼此信任與尊重之上。請勿將此工具用於任何商業牟利、包裝販售之行為。若有自行修改、架設機器人服務或二次分發的需求，請務必自覺遵守 AGPLv3 條款，**主動附上您修改後的 GitHub 專案連結與原始碼**。大家潔身自愛，專案才能走得更遠。
-
----
-
-# 致謝與來源 (Credits)
-
-## Original Project
-
-This project is a fork of [silvercow002/tronclass-script](https://github.com/silvercow002/tronclass-script).
-
-- Original author: [@silvercow002](https://github.com/silvercow002)
-- Original project: [silvercow002/tronclass-script](https://github.com/silvercow002/tronclass-script)
-- MIT License commit: [9a149d1c8470344ad3757893255bf11719782f3e](https://github.com/silvercow002/tronclass-script/commit/9a149d1c8470344ad3757893255bf11719782f3e)
-- Original MIT notice: `Copyright (c) 2025 silvercow02`
-
-Auto-Rollcall-thu-Tronclass keeps this original MIT notice and currently publishes the modified project under GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`). The original MIT License notice is preserved at the bottom of the [LICENSE](LICENSE) file.
-
+感謝他們為 TronClass 自動化開創了先河！  
+不過版專案的Python版本內容僅做為參考文件使用，請勿直接使用或修改其中的程式碼，因為它已經不再維護且可能存在安全風險。
