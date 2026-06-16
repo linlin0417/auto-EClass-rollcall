@@ -511,3 +511,4 @@ This project is a fork of [silvercow002/tronclass-script](https://github.com/sil
 
 Auto-Rollcall-thu-Tronclass keeps this original MIT notice and currently publishes the modified project under GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`). The original MIT License notice is preserved at the bottom of the [LICENSE](LICENSE) file.
 
+此部分授權條款 [hot-YUser/auto-rollcall-thu-tronclass-LICENSE](https://github.com/hot-YUser/auto-rollcall-thu-tronclass/blob/QR/LICENSE)
