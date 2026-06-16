@@ -1,0 +1,8 @@
+PythonVersion/
+tests/
+.git/
+.vscode/
+.github/
+*.log
+config.yaml
+session.json

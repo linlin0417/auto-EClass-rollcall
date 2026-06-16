@@ -92,3 +92,7 @@ desktop.ini
 # but compressed source archives and fresh raw captures must not be committed.
 *.7z
 tests/test_rollcalls.js
+
+
+# Tdr非主要開發鏈路
+.antigravity/
