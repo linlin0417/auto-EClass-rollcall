@@ -1,8 +1,16 @@
-PythonVersion/
+# Ignore Python and build files from npm package
+troTHU/
 tests/
-.git/
-.vscode/
-.github/
+workflows/
+*.py
+*.spec
+*.toml
+*.zip
 *.log
 config.yaml
 session.json
+
+# Ignore git/editor folders
+.git/
+.vscode/
+.github/
