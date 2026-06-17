@@ -1,0 +1,408 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+
+
+
+
+<html>
+<head>
+	<title>淡江大學單一登入(SSO)</title>
+	<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+    <meta http-equiv="cache-control" content="no-cache">
+    <meta http-equiv="expires" content="0">
+	<META http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<META name="viewport" content="width=device-width, initial-scale=1">
+	<!-- Browser current language is [zh_TW] -->
+	<!--[if lt IE 9]>
+		<script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+	<![endif]-->
+	
+	<!-- jQuery (required) -->
+	<!--[if !((IE)&(lt IE 9))]> --><script src="./js/jquery-2.2.4.min.js" ></script><!-- <![endif]-->
+	<!--[if   (IE)&(lt IE 9) ]>    <script src="./js/jquery-1.12.4.min.js"></script>     <![endif]-->
+	
+	<!-- jQuery UI + theme (required) -->
+	<link href="css/jquery-ui.min.css" rel="stylesheet">
+	<script src="js/jquery-ui.min.js"></script>
+	
+	<!-- keyboard widget css & script (required) -->
+	<link href="css/keyboard.css" rel="stylesheet">
+	<script src="js/jquery.keyboard.js"></script>
+	
+	<script src="js/ismobile.js"></script>
+	<script src="js/pwcapslock.js"></script>
+	<script src="js/password-meter.js"></script>
+	<link href="css/sso.css" type="text/css" rel="stylesheet">
+	
+	
+	
+	<style type="text/css">
+	.container {width:600px; margin:auto; background-color:white;}
+	
+	.content {background-color:white;}
+	.content ul li {margin-bottom:6px;}
+	
+	fieldset label{width:80px; text-align:right; display:inline-block;}
+	fieldset p {text-align:center;}
+	
+	hr{clear:both; width:90%; margin:auto;}
+	
+	#tab_opts{width:90%; margin:auto; list-style-type:none;}
+	#tab_opts li{
+	        width:auto;
+	        font-size:0.9em;
+	        padding:3px 10px;
+	        background-color:#FC0;
+	        border:1px solid #C90;
+	        border-radius:10px 10px 0px 0px;
+	        margin-bottom:0px;
+	        float:left;
+	        }
+	
+	#tab_opts .down{
+	        background-color:#EBEBEB;
+	        color:#600;
+	        }
+	
+	#dv_tab1, #dv_tab2, #dv_tab3{
+	        clear:both;
+	        background-color:#EBEBEB;
+	        padding:6px;
+	        font-size:0.8em;
+	        color:#333;
+	        border-radius:10px;
+	        }
+	#dv_tab1, #dv_tab2, #dv_tab3{display:none;}
+	
+	
+	#footer p{text-align:center; font-size:0.8em; padding:10px 0px;}
+	
+	.icon-image {width:24px; height:24px;}
+	.picture-image {height:24px;}
+	
+	A.a-link:link {COLOR:#630; TEXT-DECORATION: none;}
+	A.a-link:visited {COLOR:#630; TEXT-DECORATION: none;}
+	A.a-link:hover {COLOR:#600; TEXT-DECORATION: underline;}
+	
+	.tooltip-tipsy_right {position:relative; left:+25px; top:+0px;}
+	</style>
+	    
+	<script type="text/javascript">
+	window.onpageshow = function(event) {
+	    if (event.persisted) {
+	        window.location.reload()
+	    }
+	};
+	
+	var sound_path = '';
+	var sound_array = new Array();
+	var num = 0;
+	var nRetry = 0;
+	
+	function postImageValidate(outType, fSuccess) {
+		$(function(){
+			$.ajax({
+				type:"POST",
+				url:"./ImageValidate",
+				dataType:"text",
+				data: {"outType":outType},
+				success:function(data){
+					fSuccess(data);
+				},
+				error:function( XMLHttpRequest, strError ){
+					if (nRetry < 0) {
+						nRetry++;
+						setTimeout("setImageValidate()", 1000);
+					} else {
+						alert("載入登入頁面時發生錯誤，請重新整理(F5)登入頁面。");
+					}
+				}
+			});	
+		});
+	}
+	
+	function setImageValidate() {
+		postImageValidate(1, function (data){initVoice(data);
+											 
+											 postImageValidate(2, function (data) {document.getElementById('vidcode').value = data;});
+											 	
+											});	
+	}
+	
+	function initVoice(validStr){
+		var validStrArr = validStr.toString().split("");
+		sound_path = "./voice/";
+		sound_array[0]  = validStrArr[0] + ".mp3";
+		sound_array[1]  = validStrArr[1] + ".mp3";
+		sound_array[2]  = validStrArr[2] + ".mp3";
+		sound_array[3]  = validStrArr[3] + ".mp3";
+		sound_array[4]  = validStrArr[4] + ".mp3";
+		sound_array[5]  = validStrArr[5] + ".mp3";
+	}
+	
+	function goSound(){
+	
+		if (navigator.userAgent.match("Firefox")||navigator.userAgent.match("Chrome")){
+			var str = '<audio controls autoplay >';
+			str = str + ' <source src="' + sound_path + sound_array[num]+ '"  type="audio/wav">';
+			str = str + '</audio>';
+			document.getElementById('FirefoxMediaPlayerhtml').innerHTML = str ;
+			num++;
+			if(num<6)window.setTimeout("goSound()",1500);
+			if(num>=6)num=0;
+		}else {
+			var str = ' <object id="play_tw" width="0" height="0" classid="CLSID:22D6f312-B0F6-11D0-94AB-0080C74C7E95" ';
+			str = str + ' type="application/x-oleobject" codebase="http://activex.microsoft.com/activex/controls/mplayer/en/nsmp2inf.cab#Version=6,4,7,1112">  ';
+			str = str + ' <param name="src" value=\"'+sound_path + sound_array[num]+'\" />  ';
+			str = str + ' <embed id="play_tw" type="audio/x-wav" volume="100" src=\"'+sound_path + sound_array[num]+'\"';
+			str = str + ' hidden="true" width="0" height="0" /></object> ';
+			document.getElementById('MediaPlayerhtml').innerHTML = str ;
+			num++;
+			if(num<6){
+				window.setTimeout("goSound()",1500);
+			}
+			if(num>=6){
+				num=0;
+			}
+		}	
+	}	
+	</script>
+	
+	<script language="javascript">
+		
+		if(document.location.href.indexOf("http://portal.tku.edu.tw/NEAI/")>=0){
+		    var strt1 = document.location.href;
+		    strt1 = strt1.replace("http://portal.tku.edu.tw/NEAI/","https://sso.tku.edu.tw/NEAI/");
+		    document.location.href = strt1;
+		}
+		else if(document.location.href.indexOf("http://sso.tku.edu.tw/NEAI/")>=0){
+		    var strt1 = document.location.href;
+		    strt1 = strt1.replace("http://sso.tku.edu.tw/NEAI/","https://sso.tku.edu.tw/NEAI/");
+		    document.location.href = strt1;
+		}
+		else if(document.location.href.indexOf("https://portal.tku.edu.tw/NEAI/")>=0){
+		    var strt1 = document.location.href;
+		    strt1 = strt1.replace("https://portal.tku.edu.tw/NEAI/","https://sso.tku.edu.tw/NEAI/");
+		    document.location.href = strt1;	 
+		}
+		 
+		var lastTab = 0;
+		function showhide(myTab){
+			for(var i=1; i <= 3; i++)
+			{
+			    document.getElementById("dv_tab" + i).style.display="none";
+			    document.getElementById("li_tab" + i).style.backgroundColor="#FC0";
+			    document.getElementById("li_tab" + i).style.color="#630";
+			}
+		
+			if (lastTab != myTab) {
+		        var myTabName = "dv_tab" + myTab;
+		        document.getElementById(myTabName).style.display ="block";
+		        document.getElementById("li_tab" + myTab).style.backgroundColor="#EBEBEB";
+		        document.getElementById("li_tab" + myTab).style.color="#600";
+		        document.getElementById("li_tab" + myTab).style.borderBottom="none";
+		        lastTab = myTab;
+		    }
+		    else
+		    	lastTab = 0;
+		    pwcapslock.relocate_all();
+		}
+		
+		// 2019/09/12 Added, Trim trailing spaces
+		// 2020/06/03 Modified by CTL, Eliminate special characters:\, (, ).
+		// 2020/06/04 Modified by CTL, Eliminate all special characters excluding space and underline.
+		function rightTrim(){
+			var un = document.getElementById('username').value;
+			// document.getElementById('username').value =  un.replace(/( )+$/, "").replace(/[\\\(\)]/g, "");
+			document.getElementById('username').value =  un.replace(/( )+$/, "").replace(/[^\w\s]/g, "");
+		}
+	
+	    function onSubmit() {
+	        document.getElementById('eaiForm').submit();
+	    }
+	</script>
+</head>
+
+<body onload="setImageValidate();document.eaiForm.username.focus();">
+<form name="eaiForm" method="post" action="/NEAI/login2.do?action=EAI" id="eaiForm">
+<input type="hidden" id="myurl" name="myurl" value="https://iclass.tku.edu.tw/user/login" />
+<input type="hidden" id="ln" name="ln" value="zh_TW" />
+<input type="hidden" id="embed" name="embed" value="No" />
+<input type="hidden" id="vkb" name="vkb" value="No" />
+<input type="hidden" id="logintype" name="logintype" value="logineb" />
+<div class="container">
+
+  	<article class="content">
+  		<section>
+  
+			<h2>淡江大學單一登入(SSO)</h2>
+  			
+			<fieldset>
+                <legend><img src="images/ssologin.png" class="picture-image">　請輸入您的帳號及密碼　</legend>			
+                <p>
+                	<label>帳號：</label><!-- html:text property="username" size="20" /--><input type="text" id="username" name="username" size="20" required>
+                	<img id="username-opener" class="tooltip-tipsy tooltip-tipsy_right" title="顯示虛擬鍵盤" src="css/images/keyboard.svg">                	
+                </p>
+                <p>
+                	<label>密碼：</label><!-- html:password property="password" size="20"/--><input type="password" id="password" name="password" size="20" required>
+                	<img id="password-opener" class="tooltip-tipsy tooltip-tipsy_right" title="顯示虛擬鍵盤" src="css/images/keyboard.svg">
+                </p>
+                <p style="display:none"><label>驗證碼：</label>
+                   <input type="text" name="vidcode" maxlength="6" size="20" value="" id="vidcode"><br/>
+                   <label> </label>
+                   <img border=0 src="./ImageValidate">
+                   <a href="#" onclick="return false;" onkeypress="return false;">
+                      <img src="./voice/sound.png" width="22" height="22" title="語音驗證碼" border="0" onclick="goSound()" onkeypress="goSound()" border="0">
+                   </a><br></p>
+                
+                    <p><font color="red" size="3" face="Fixedsys"> 圖形驗證碼已失效！請重新登入。 </font></p>
+                
+                <div class="dv_center">
+                	<input type="submit" name="loginbtn" id="loginbtn" value="登入" onclick="rightTrim()" class='g-recaptcha' >
+                	
+              	</div><br>
+                <div class="dv_center">
+                	<a class="a-blue" href="/j_self/pswdself/goAction.do?ln=zh_TW">忘記密碼?</a> &nbsp;&nbsp; 
+  
+                	<a class="a-blue" href="/NEAI/logineb.jsp?ln=en_US&embed=no&myurl=https://iclass.tku.edu.tw/user/login" title="Switch the webpage to English.">English</a>
+  			
+                </div>
+			</fieldset>
+  
+            <ul id="tab_opts">
+                <li id="li_tab1"><a class="a-link" href="javascript:showhide(1);">帳號及密碼</a></li>
+                <li id="li_tab2" style="display:none;"><a class="a-link" href="javascript:showhide(2);">安全性憑證</a></li>
+                <li id="li_tab3"><a class="a-link" href="javascript:showhide(3);">服務台</a></li>
+            </ul>			
+            <div id="dv_tab1">
+                <ul>
+  
+                    <li>帳號： 學生、校友請使用您的學號； 教職員為人員代號(6 碼)。<br>
+						<font color=red>可登入</font>的帳號：在學及休學的學生、82 學年度起畢業的校友、在職及退休的教職員。<br>
+						<font color=red>未支援</font>的帳號：退學的學生、81 學年度及之前畢業的校友、離職及聘期已結束的教職員。
+                    </li>
+                      
+                    <li>密碼：<FONT color=red><strong>首次登入</strong>請使用 'Tku' + 西元年生日(例如，生日：1997/02/25，密碼：Tku19970225)；<br>首次登入成功後，瀏覽器將導到變更密碼頁面，請依畫面指示(或參考<a class="a-blue" href="opendocs/SSO_ChangePassword.pdf" target="_blank">這裡</a>)變更密碼，並牢記此新密碼，以供後續須要進入學校資訊應用系統時登入密碼驗證之用，如果未變更密碼，下次再登入時，依舊會再度導到變更密碼頁面要求您變更密碼。</FONT></li>
+                    <li>忘記密碼時，如果您已完成『密碼提示設定』，請依 <a class="a-blue" href="/j_self/pswdself/goAction.do?ln=zh_TW">忘記密碼重設步驟</a> 重設密碼。否則請直接填寫『淡江大學密碼重設申請表(<a class="a-blue" href="https://www.ipc.tku.edu.tw/ipc/wp-content/uploads/2026/03/FKQX10-%E6%B7%A1%E6%B1%9F%E5%A4%A7%E5%AD%B8%E5%AF%86%E7%A2%BC%E9%87%8D%E8%A8%AD%E7%94%B3%E8%AB%8B%E8%A1%A8.docx">Word 版</a>)』，並依申請單上說明處理之。若尚有其他服務請求，請洽資訊處服務台(商管大樓 B212 室，電話 26215656 轉 2468)申請辦理。</li>
+                    <li>登入成功後，網頁瀏覽完畢離開電腦前，請先登出或關閉所有瀏覽器，以避免身分被冒用，並確保個人資訊不外洩，否則下一位使用者就可能繼續以您的身分查詢您個人的機密資訊。</li>
+                </ul>
+            </div>
+            <div id="dv_tab2">
+                <ul>
+                    <li>顯示『此網站的安全性憑證有問題』？<br>
+                        那是因為本網站登入網頁已套用 HTTPS (可確保您輸入的密碼在網路傳輸時不會被竊取)， 而您目前的瀏覽器尚未信任 HTTPS 所使用的 SSL 憑證所造成。<br>
+                        請務必先安裝核發本系統目前使用之 SSL 憑證的根憑證：PDS-RCA II， 並確定您的電腦已經『信任』此根憑證，如果還未信任此根憑證， 請在此 <a class="a-blue" href="opendocs/PDS-RCA_II.zip" target="_blank">下載根憑證</a> 並解壓縮， 再將此根憑證安裝到『本機電腦』的『信任的根憑證授權』清單中， 安裝成功後請重新開啟本網頁。<br>
+                        詳細安裝方式請參考 <a class="a-blue" href="opendocs/SsoInstall_RootCert.pdf" target="_blank">根憑證 PDS-RCA II 安裝步驟</a>。
+                                        </li>
+                </ul>
+            </div>
+            <div id="dv_tab3">
+                <ul>
+                    <li>關於操作問題請洽：<br>
+                       資訊處 服務台<br>
+                        <img src="images/icon_email.png" class="icon-image">：<a title="為減少被不當蒐集濫發廣告信件，請自行輸入電子郵件地址。" href="mailto:"><img src="images/email_EBEBEB.png" width="200" height="19"></a><br>
+                        <img src="images/icon_phone.png" class="icon-image">：(02) 2621-5656 轉 2468。
+                        </li>
+                    <li>學生請假相關問題請洽：<br>
+                        學生事務處 生活輔導組<br>
+                        <img src="images/icon_phone.png" class="icon-image">：(02) 2621-5656 轉 2214、2217、2817。
+                        </li>
+                </ul>
+            </div>
+  			
+  		</section>
+	</article>
+  
+  <hr></hr>
+  <div id="footer">
+    <p>
+        <a class="a-blue" href="http://www.tku.edu.tw/" target="__tkuhome">淡江大學</a> │
+        <a class="a-blue" href="http://www.ipc.tku.edu.tw/" target="__ipchome">資訊處</a>
+    </p>
+  </div>
+  
+
+
+</div>
+</form>
+<div id="MediaPlayerhtml" style="overflow: hidden" ></div>
+<div id="FirefoxMediaPlayerhtml" style="display:none"></div>
+
+<script language="javascript">
+	pwcapslock.preferLang("zh_TW");
+	pwcapslock.showLength(true);
+	//pwcapslock.colorStrength(true);
+
+
+	showhide(1);
+
+  
+
+
+</script>
+
+<!-- initialize keyboard (required) -->
+<!-- Added, 2019/02/27 ~ 2019/03/06 -->
+<script>
+	if (false && !isMobile.any()){
+	    $(function(){	
+		    var __tmrRefresh;
+	    
+	        $('#username').keyboard({openOn : null,
+	                                 stayOpen : true,
+	                                 layout : 'qwerty'});
+	
+	        $('#username-opener').click(function(){
+	            var kb = $('#username').getkeyboard();
+	            // close the keyboard if the keyboard is visible and the button is clicked a second time
+	            if ( kb.isOpen ) {
+	                kb.close();
+	            } else {
+	                kb.reveal();
+	            }
+	        });
+	
+	        $('#password').keyboard({openOn : null,
+	                                 stayOpen : true,
+	                                 layout : 'qwerty'});
+	
+	        $('#password-opener').click(function(){
+	            var kb = $('#password').getkeyboard();
+	            // close the keyboard if the keyboard is visible and the button is clicked a second time
+	            if ( kb.isOpen ) {
+	                kb.close();
+	            } else {
+	                kb.reveal();
+	            }
+	            
+	            if (pwcapslock.showLength()){
+	    	  	  	if ((typeof __tmrRefresh != "undefined") && (null != __tmrRefresh))
+	    	  			clearInterval(__tmrRefresh);
+		  	      	__tmrRefresh = setInterval(refreshLenLable, 200);
+		  	    }
+	        });
+	        
+		    function refreshLenLable(){
+	            var kb = $('#password').getkeyboard();
+	
+	            if ( !kb.isOpen ) {
+			    	pwcapslock.genLenLabelHTML(document.getElementById("password"));
+	    	  		clearInterval(__tmrRefresh);
+	    	  	}
+		    }
+	    });
+	}
+	else {    
+	    $('#username-opener, #password-opener').hide();
+	};
+</script>
+
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-108917342-1"></script>
+
+
+</body>
+</html>
+<HTML>
+<BODY onfocus="document.cookie='IV_JCT=%2FNEAI; path=/'">
+</BODY>
+</HTML>

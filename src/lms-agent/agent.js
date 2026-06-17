@@ -4,6 +4,7 @@ const { createSafeLogger } = require('../utils/logger');
 const { buildEndpoints } = require('./endpoints');
 const { SessionCookieStore } = require('./cookie-store');
 const { AuthenticationParser } = require('./auth-parser');
+const { TkuSsoFlow } = require('./tku-sso');
 
 /**
  * Manages HTTP communication with the LMS (Learning Management System).
@@ -64,12 +65,27 @@ class CampusNetworkAgent {
    * Authenticates the user. Restores from disk if possible.
    * @param {string} username 
    * @param {string} password 
+   * @param {string} [cookieString] - Optional raw cookie string to bypass login
    */
-  async authenticate(username, password) {
+  async authenticate(username, password, cookieString = null) {
+    if (cookieString) {
+      this.logger.info('Using provided raw cookie string to bypass SSO login...');
+      // Manually ingest the provided string by simulating a Set-Cookie array
+      this.cookies.ingest(cookieString.split(';').map(c => c.trim()));
+      
+      const testRes = await this.request(this.endpoints.dashboard());
+      if (testRes.status === 200 && !testRes.url.includes('/login')) {
+        this.logger.info(`Session restored successfully via raw cookie.`);
+        this.cookies.saveToDisk();
+        return true;
+      }
+      this.logger.warn('Provided raw cookie is invalid or expired. Falling back to password login...');
+    }
+
     if (this.cookies.loadFromDisk()) {
       // Validate session via a quick dashboard fetch
       const testRes = await this.request(this.endpoints.dashboard());
-      if (testRes.status === 200 && !testRes.url.includes('/login')) {
+      if (testRes.status === 200 && !testRes.url.includes('/login') && !testRes.url.includes('sso.tku.edu.tw')) {
         this.logger.info(`Session restored successfully for ${username}.`);
         return true;
       }
@@ -78,6 +94,17 @@ class CampusNetworkAgent {
 
     this.logger.info(`Initiating fresh login sequence for ${username}...`);
     
+    // Check if the school is TKU which requires a custom SSO bypass
+    if (this.baseUrl.includes('iclass.tku.edu.tw') || this.baseUrl.includes('tku.edu.tw')) {
+      const tkuFlow = new TkuSsoFlow(this);
+      const success = await tkuFlow.execute(username, password);
+      if (success) {
+        this.cookies.saveToDisk();
+        return true;
+      }
+    }
+    
+    // Default standard TronClass login flow
     // 1. Fetch Login Page
     const pageRes = await this.request(this.endpoints.loginPage());
     const html = await pageRes.text();

@@ -40,7 +40,7 @@ function buildProgram() {
 
       // 3. Authenticate
       try {
-        await agent.authenticate(profile.user, profile.passwd);
+        await agent.authenticate(profile.user, profile.passwd, profile.cookie_string);
       } catch (err) {
         logger.error(`[Fatal] Authentication failed: ${err.message}`);
         process.exit(1);

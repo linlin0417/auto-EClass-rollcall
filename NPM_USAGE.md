@@ -1,6 +1,6 @@
 # AutoRollCall (純 JS / NPM 版) 使用指南
 
-這份文件專門介紹如何使用發布在 NPM 上的純 JavaScript 版 `auto-rollcall-thu-tronclass`。此版本跨平台、輕量且高效，專注於提供最核心的全自動點名功能（支援數字、雷達、QR 點名）。
+這份文件專門介紹如何使用發布在 NPM 上的純 JavaScript 版 `auto-rollcall-tronclass`。此版本跨平台、輕量且高效，專注於提供最核心的全自動點名功能（支援數字、雷達、QR 點名）。
 
 ## 系統需求
 
@@ -13,7 +13,7 @@
 打開您的終端機（Terminal / PowerShell / 命令提示字元），輸入以下指令進行全域安裝：
 
 ```bash
-npm install -g auto-rollcall-thu-tronclass
+npm install -g auto-rollcall-tronclass
 ```
 
 安裝完成後，您的系統將會多出一個全域指令 `trothu`。

@@ -1,6 +1,6 @@
 # AutoRollCall (Node.js Version)
 
-[![npm version](https://img.shields.io/npm/v/auto-rollcall-thu-tronclass.svg)](https://www.npmjs.com/package/auto-rollcall-thu-tronclass)
+[![npm version](https://img.shields.io/npm/v/auto-rollcall-tronclass.svg)](https://www.npmjs.com/package/auto-rollcall-tronclass)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 **TronClass 校園點名系統的全自動點名工具 (Clean Room Node.js 版本)**
@@ -28,7 +28,7 @@
 打開終端機，執行以下指令將工具全域安裝：
 
 ```bash
-npm install -g auto-rollcall-thu-tronclass
+npm install -g auto-rollcall-tronclass
 ```
 
 ---
@@ -67,8 +67,8 @@ trothu run
 此版本 (v3.0.0+) 已被設計為可以輕鬆作為底層依賴。您可以這樣將它整合進自己的 Node.js 專案：
 
 ```javascript
-const { CampusNetworkAgent } = require('auto-rollcall-thu-tronclass/src/lms-agent/agent');
-const { AttendanceWatcher } = require('auto-rollcall-thu-tronclass/src/attendance-tasks/watcher');
+const { CampusNetworkAgent } = require('auto-rollcall-tronclass/src/lms-agent/agent');
+const { AttendanceWatcher } = require('auto-rollcall-tronclass/src/attendance-tasks/watcher');
 
 // 傳入您自訂的 Logger (例如 winston 或 irika-Logger-System)
 const myLogger = require('irika-Logger-System');

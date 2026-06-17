@@ -1,11 +1,11 @@
 {
-  "name": "auto-rollcall-thu-tronclass",
+  "name": "auto-rollcall-tronclass",
   "version": "3.0.0",
   "description": "TronClass 校園點名系統的全自動點名工具 (Clean Room Node.js Version)",
   "main": "src/cli/index.js",
   "bin": {
     "trothu": "bin/trothu.js",
-    "auto-rollcall-thu-tronclass": "bin/trothu.js"
+    "auto-rollcall-tronclass": "bin/trothu.js"
   },
   "scripts": {
     "start": "node bin/trothu.js run",

@@ -108,3 +108,4 @@ tests/test_rollcalls.js
 
 # npm ver 開發依賴
 node_modules/
+session.json
