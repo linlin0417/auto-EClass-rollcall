@@ -116,7 +116,7 @@ PROVIDERS: Dict[str, ProviderDefinition] = {
             "https://tcidentity.thu.edu.tw/auth/realms/thu/protocol/cas/login"
             "?ui_locales=zh-TW&service=https%3A//ilearn.thu.edu.tw/login&locale=zh_TW"
         ),
-        auth_flow="thu_cas",
+        auth_flow="cas",
         status="ready",
         support_level="ready",
         capabilities=ProviderCapabilities(
@@ -136,7 +136,7 @@ PROVIDERS: Dict[str, ProviderDefinition] = {
         label="Fu Jen Catholic University TronClass",
         base_url="https://elearn2.fju.edu.tw",
         login_url="https://elearn2.fju.edu.tw/login",
-        auth_flow="fju_ocr_captcha",
+        auth_flow="cas_ocr_captcha",
         status="ready",
         support_level="ready",
         capabilities=ProviderCapabilities(
@@ -156,7 +156,7 @@ PROVIDERS: Dict[str, ProviderDefinition] = {
         label="Tamkang University TronClass",
         base_url="https://iclass.tku.edu.tw",
         login_url="https://iclass.tku.edu.tw/login?next=/iportal&locale=zh_TW",
-        auth_flow="tku_sso_browser",
+        auth_flow="nam_neai",
         status="ready",
         support_level="ready",
         capabilities=ProviderCapabilities(
@@ -196,7 +196,7 @@ PROVIDERS: Dict[str, ProviderDefinition] = {
         label="Soochow University TronClass",
         base_url="https://tronclass.scu.edu.tw",
         login_url="https://tronclass.scu.edu.tw/cas/login?ui_locales=zh-TW&service=https%3A//tronclass.scu.edu.tw/user/index&locale=zh_TW",
-        auth_flow="thu_cas",
+        auth_flow="cas",
         status="ready",
         capabilities=ProviderCapabilities(
             number=True,
@@ -211,6 +211,86 @@ PROVIDERS: Dict[str, ProviderDefinition] = {
         notes="Soochow University TronClass provider. Uses standard CAS login form extraction.",
     ),
 }
+
+
+# Bulk-registered TronClass schools. All share the same full capability set, so they
+# are data-driven rather than 32 verbose literals. login_url defaults to base_url +
+# "/login": TronClass /login 302-redirects to each school's CAS/Keycloak IdP. The 5th
+# tuple field overrides login_url when /login does not expose the form (e.g. NOU only
+# serves the CAS form at /cas/login).
+#
+# auth_flow is NOT used to dispatch the login: login_flow.run_login_flow detects every
+# feature (captcha kind, SSO discovery, email SPA, NAM) from the live page. The value is
+# kept only as a documentation hint and for two pre-login decisions
+# (auth_runtime.provider_requires_manual_cookie_login): OCR-captcha degradation and the
+# manual_cookie_only / interactive_browser modes. All values are protocol/feature names,
+# never school names:
+#   cas                — generic CAS/Keycloak/SSO credential form (most schools).
+#   cas_ocr_captcha    — CAS that also shows a static image captcha (FJU, NTOU).
+#   keycloak_ocr_captcha — Keycloak realm with a JSON captcha (Asia, MacKay, NFU).
+#   public_cloud_email — TronClass-native email/password SPA, no CAS (KWNC).
+# (Legacy values cas_api_validated / cas_login_settings are accepted and treated as cas.)
+_STANDARD_CAPS = ProviderCapabilities(
+    number=True,
+    radar=True,
+    qrcode=True,
+    course_discovery=True,
+    teacher_rollcall=True,
+    manual_qr=True,
+    local_scanner=True,
+    direct_code_lookup=True,
+)
+
+# (key, label, base_url, auth_flow, login_url_override | None)
+_TRONCLASS_SCHOOLS = [
+    ("asia", "Asia University TronClass", "https://tronclass.asia.edu.tw", "keycloak_ocr_captcha", None),
+    ("au", "Aletheia University TronClass", "https://tronclass.au.edu.tw", "cas_api_validated", None),
+    ("aeust", "Oriental Institute of Technology TronClass", "https://elearning.aeust.edu.tw", "cas_api_validated", None),
+    ("cgust", "Chang Gung University of Science and Technology TronClass", "https://tronclass.cgust.edu.tw", "cas_api_validated", None),
+    ("cityumo", "City University of Macau TronClass", "https://tronclass.cityu.edu.mo", "cas_login_settings", None),
+    ("cjcu", "Chang Jung Christian University TronClass", "https://tronclass.cjcu.edu.tw", "cas_api_validated", None),
+    ("ctust", "Central Taiwan University of Science and Technology TronClass", "https://tronclass.ctust.edu.tw", "cas_api_validated", None),
+    ("cufa", "Chungyu University of Film and Arts TronClass", "https://tronclass.cufa.edu.tw", "cas_api_validated", None),
+    ("cyut", "Chaoyang University of Technology TronClass", "https://tronclass.cyut.edu.tw", "cas_api_validated", None),
+    ("dyu", "Da-Yeh University TronClass", "https://tronclass.dyu.edu.tw", "cas_api_validated", None),
+    ("hk", "Hungkuang University TronClass", "https://tronclass.hk.edu.tw", "cas_api_validated", None),
+    ("hwu", "Hsing Wu University TronClass", "https://iclass.hwu.edu.tw", "cas_api_validated", None),
+    ("lhu", "Lunghwa University of Science and Technology TronClass", "https://elearn.lhu.edu.tw", "cas_login_settings", None),
+    ("mkc", "MacKay Junior College of Medicine, Nursing and Management TronClass", "https://tronclass.mkc.edu.tw", "keycloak_ocr_captcha", None),
+    ("must", "Minghsin University of Science and Technology TronClass", "https://tronclass.must.edu.tw", "cas_api_validated", None),
+    ("nanya", "Nanya Institute of Technology TronClass", "https://tronclass.nanya.edu.tw", "cas_api_validated", None),
+    ("ncue", "National Changhua University of Education TronClass", "https://tronclass.ncue.edu.tw", "cas_login_settings", None),
+    ("ncut", "National Chin-Yi University of Technology TronClass", "https://tronclass.ncut.edu.tw", "cas_login_settings", None),
+    ("nfu", "National Formosa University TronClass", "https://ulearn.nfu.edu.tw", "keycloak_ocr_captcha", None),
+    ("nou", "National Open University TronClass", "https://tronclass.nou.edu.tw", "cas_api_validated", "https://tronclass.nou.edu.tw/cas/login"),
+    ("nsysu", "National Sun Yat-sen University TronClass", "https://elearn.nsysu.edu.tw", "cas_api_validated", None),
+    ("ntou", "National Taiwan Ocean University TronClass", "https://tronclass.ntou.edu.tw", "cas_ocr_captcha", None),
+    ("ntub", "National Taipei University of Business TronClass", "https://tronclass.ntub.edu.tw", "cas_login_settings", None),
+    ("ntuspecs", "NTU School of Professional Education and Continuing Studies TronClass", "https://elearn.ntuspecs.ntu.edu.tw", "cas_api_validated", None),
+    ("ocu", "Overseas Chinese University TronClass", "https://tronclass.ocu.edu.tw", "cas_api_validated", None),
+    ("pu", "Providence University TronClass", "https://tronclass.pu.edu.tw", "cas_api_validated", None),
+    ("shu", "Shih Hsin University TronClass", "https://tronclass.shu.edu.tw", "cas_api_validated", None),
+    ("stu", "Shu-Te University TronClass", "https://tc.stu.edu.tw", "cas_api_validated", None),
+    ("ttu", "Tatung University TronClass", "https://ilearn.ttu.edu.tw", "cas_api_validated", None),
+    ("usc", "Shih Chien University TronClass", "https://tronclass.usc.edu.tw", "cas_api_validated", None),
+    ("ypu", "Yuanpei University of Medical Technology TronClass", "https://tronclass.ypu.edu.tw", "cas_api_validated", None),
+    ("yuntech", "National Yunlin University of Science and Technology TronClass", "https://eclass.yuntech.edu.tw", "cas_login_settings", None),
+    ("kwnc", "Kiang Wu Nursing College of Macau TronClass", "https://tronclass.kwnc.edu.mo", "public_cloud_email", None),
+]
+
+for _key, _label, _base_url, _auth_flow, _login_url in _TRONCLASS_SCHOOLS:
+    PROVIDERS[_key] = ProviderDefinition(
+        key=_key,
+        label=_label,
+        base_url=_base_url,
+        login_url=_login_url or (_base_url + "/login"),
+        auth_flow=_auth_flow,
+        status="ready",
+        support_level="ready",
+        capabilities=_STANDARD_CAPS,
+        notes="Bulk-registered TronClass school (login via {}).".format(_auth_flow),
+    )
+
 
 PROVIDER_ALIASES = {
     "": DEFAULT_PROVIDER,
@@ -239,6 +319,90 @@ PROVIDER_ALIASES = {
     "soochow": "scu",
     "東吳": "scu",
     "東吳大學": "scu",
+    # --- Bulk-registered TronClass schools (中文別名；key 本身已可解析) ---
+    "亞洲大學": "asia",
+    "亞洲": "asia",
+    "真理大學": "au",
+    "真理": "au",
+    "亞東科技大學": "aeust",
+    "亞東": "aeust",
+    "長庚科技大學": "cgust",
+    "長庚科大": "cgust",
+    "澳門城市大學": "cityumo",
+    "城市大學": "cityumo",
+    "長榮大學": "cjcu",
+    "長榮": "cjcu",
+    "中台科技大學": "ctust",
+    "中台科大": "ctust",
+    "崇右影藝科技大學": "cufa",
+    "崇右": "cufa",
+    "朝陽科技大學": "cyut",
+    "朝陽科大": "cyut",
+    "大葉大學": "dyu",
+    "大葉": "dyu",
+    "弘光科技大學": "hk",
+    "弘光科大": "hk",
+    "醒吾科技大學": "hwu",
+    "醒吾": "hwu",
+    "龍華科技大學": "lhu",
+    "龍華科大": "lhu",
+    "龍華": "lhu",
+    "lunghwa": "lhu",
+    "馬偕醫護管理專科學校": "mkc",
+    "馬偕": "mkc",
+    "明新科技大學": "must",
+    "明新科大": "must",
+    "南亞技術學院": "nanya",
+    "南亞": "nanya",
+    "國立彰化師範大學": "ncue",
+    "彰師大": "ncue",
+    "彰化師範大學": "ncue",
+    "國立勤益科技大學": "ncut",
+    "勤益": "ncut",
+    "勤益科大": "ncut",
+    "國立虎尾科技大學": "nfu",
+    "虎尾科大": "nfu",
+    "虎尾": "nfu",
+    "國立空中大學": "nou",
+    "空中大學": "nou",
+    "空大": "nou",
+    "國立中山大學": "nsysu",
+    "中山大學": "nsysu",
+    "國立臺灣海洋大學": "ntou",
+    "國立台灣海洋大學": "ntou",
+    "海洋大學": "ntou",
+    "海大": "ntou",
+    "國立臺北商業大學": "ntub",
+    "國立台北商業大學": "ntub",
+    "北商大": "ntub",
+    "臺灣大學進修推廣學院": "ntuspecs",
+    "台灣大學進修推廣學院": "ntuspecs",
+    "臺大進修推廣學院": "ntuspecs",
+    "台大進修推廣學院": "ntuspecs",
+    "僑光科技大學": "ocu",
+    "僑光科大": "ocu",
+    "僑光": "ocu",
+    "靜宜大學": "pu",
+    "靜宜": "pu",
+    "世新大學": "shu",
+    "世新": "shu",
+    "樹德科技大學": "stu",
+    "樹德科大": "stu",
+    "樹德": "stu",
+    "大同大學": "ttu",
+    "大同": "ttu",
+    "實踐大學": "usc",
+    "實踐": "usc",
+    "元培醫事科技大學": "ypu",
+    "元培": "ypu",
+    "元培科大": "ypu",
+    "國立雲林科技大學": "yuntech",
+    "雲林科技大學": "yuntech",
+    "雲科大": "yuntech",
+    "雲科": "yuntech",
+    "澳門鏡湖護理學院": "kwnc",
+    "鏡湖護理學院": "kwnc",
+    "鏡湖": "kwnc",
 }
 
 
@@ -422,7 +586,7 @@ def normalize_provider_config(value: Any) -> Dict[str, Any]:
                 "rollcalls_url": endpoints["rollcalls_url"],
                 "current_semester_url": endpoints["current_semester_url"],
                 "courses_url": endpoints["courses_url"],
-                "auth_flow": "interactive_browser" if key.startswith("url_") else "thu_cas",
+                "auth_flow": "interactive_browser" if key.startswith("url_") else "cas",
                 "status": "ready",
                 "support_level": "ready",
                 "ready": True,
@@ -459,6 +623,10 @@ def normalize_provider_config(value: Any) -> Dict[str, Any]:
                 "courses_url",
                 "auth_flow",
                 "notes",
+                "captcha_image_name",
+                "captcha_field",
+                "captcha_charset",
+                "captcha_length",
             ):
                 if override_key in override:
                     merged[override_key] = str(override[override_key] or "")
