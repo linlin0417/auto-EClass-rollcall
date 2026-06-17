@@ -13,12 +13,12 @@ function buildEndpoints(baseUrl) {
     dashboard: () => `${base}/user/index`,
     
     // Attendance tasks polling (checks for active rollcalls)
-    activeTasks: () => `${base}/api/student_rollcalls?_=${Date.now()}`,
+    activeTasks: () => `${base}/api/radar/rollcalls?api_version=1.1.0`,
     
     // Submission endpoints
-    submitPin: (id) => `${base}/api/student_rollcalls/${id}?_=${Date.now()}`,
-    submitGeo: (id) => `${base}/api/student_rollcalls/${id}/radar_answer`,
-    submitScan: (id) => `${base}/api/student_rollcalls/${id}/qr_answer`
+    submitPin: (id) => `${base}/api/rollcall/${id}/student_rollcalls`,
+    submitGeo: (id) => `${base}/api/rollcall/${id}/answer`,
+    submitScan: (id) => `${base}/api/rollcall/${id}/answer_qr_rollcall`
   };
 }
 

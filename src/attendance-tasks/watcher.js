@@ -53,8 +53,9 @@ class AttendanceWatcher {
 
   async _poll() {
     const data = await this.agent.getActiveTasks();
+    const tasks = data.student_rollcalls || data.rollcalls || [];
 
-    if (!data.student_rollcalls || data.student_rollcalls.length === 0) {
+    if (tasks.length === 0) {
       // Idle state
       process.stdout.write('.'); 
       return;
@@ -63,7 +64,7 @@ class AttendanceWatcher {
     // Newline to break from idle dots
     console.log('');
 
-    for (const task of data.student_rollcalls) {
+    for (const task of tasks) {
       if (this.completedTasks.has(task.id)) {
         continue; // Already handled
       }

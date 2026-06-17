@@ -1,6 +1,6 @@
 {
   "name": "auto-rollcall-tronclass",
-  "version": "3.0.0",
+  "version": "3.0.2",
   "description": "TronClass 校園點名系統的全自動點名工具 (Clean Room Node.js Version)",
   "main": "src/cli/index.js",
   "bin": {

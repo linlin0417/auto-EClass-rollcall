@@ -21,19 +21,39 @@ class TkuSsoFlow {
   async execute(username, password) {
     this.logger.info('[TKU-SSO] Initiating Tamkang University SSO flow...');
     
-    // Step 1: Request the SSO Gateway page
-    // The target we want to eventually be authenticated for
-    const targetUrl = `${this.agent.baseUrl}/user/login`;
-    const ssoUrl = `https://sso.tku.edu.tw/NEAI/logineb.jsp?myurl=${encodeURIComponent(targetUrl)}`;
+    // Step 1: Request the TronClass login entry point.
+    // In modern TKU TronClass, it's an OIDC flow via Keycloak protected by WebSEAL.
+    const entryUrl = `${this.agent.baseUrl}/login?next=/iportal&locale=zh_TW`;
     
-    this.logger.debug(`[TKU-SSO] Fetching SSO form from: ${ssoUrl}`);
-    const ssoPageRes = await this.agent.request(ssoUrl);
-    const ssoHtml = await ssoPageRes.text();
+    this.logger.debug(`[TKU-SSO] Fetching entry point: ${entryUrl}`);
+    const entryRes = await this.agent.request(entryUrl);
+    
+    // This should redirect to Keycloak: https://sso.tku.edu.tw/auth/...
+    let keycloakUrl = entryUrl;
+    if (entryRes.status === 302 || entryRes.status === 301) {
+      keycloakUrl = entryRes.headers.get('location');
+    }
+    
+    this.logger.debug(`[TKU-SSO] Fetching SSO gate: ${keycloakUrl}`);
+    const ssoPageRes = await this.agent.request(keycloakUrl);
+    let ssoHtml = await ssoPageRes.text();
+    let websealFormUrl = keycloakUrl;
 
-    // Step 2: Extract form action and jsessionid
+    // If it's a JS redirect (WebSEAL sometimes does this)
+    // In WebSEAL's HTML, it does: window.location.href="...logineb.jsp?myurl=" + redirUrl;
+    const jsRedirectMatch = ssoHtml.match(/window\.location\.href\s*=\s*["']([^"']+)["']\s*\+\s*redirUrl/i);
+    if (jsRedirectMatch) {
+      const realSsoUrl = jsRedirectMatch[1] + encodeURIComponent(keycloakUrl);
+      this.logger.debug(`[TKU-SSO] Following WebSEAL JS redirect to: ${realSsoUrl}`);
+      const jsRes = await this.agent.request(realSsoUrl);
+      ssoHtml = await jsRes.text();
+      websealFormUrl = realSsoUrl;
+    }
+
+    // Step 2: Extract form action and jsessionid from WebSEAL form
     const actionMatch = ssoHtml.match(/<form[^>]+action="([^"]+login2\.do[^"]*)"/i);
     if (!actionMatch) {
-      throw new Error('Could not find TKU SSO form action url.');
+      throw new Error('Could not find TKU SSO form action url. The authentication flow might have changed.');
     }
     const formAction = actionMatch[1].startsWith('http') 
       ? actionMatch[1] 
@@ -46,8 +66,10 @@ class TkuSsoFlow {
     while ((match = inputRegex.exec(ssoHtml)) !== null) {
       hiddenInputs[match[2]] = match[3];
     }
-    // Ensure myurl is set to what we want
-    hiddenInputs['myurl'] = targetUrl;
+    
+    // WebSEAL login2.do uses this myurl field to decide where to redirect after login.
+    // We MUST override it with the Keycloak URL, otherwise it sends us to www.tku.edu.tw!
+    hiddenInputs['myurl'] = keycloakUrl;
 
     // Step 3: Exploit the SSO API to get the hidden Captcha (vidcode)
     this.logger.info('[TKU-SSO] Fetching hidden verification code (Captcha bypass)...');
@@ -55,7 +77,7 @@ class TkuSsoFlow {
     // TKU requires the image to be "loaded" to initialize the captcha session
     await this.agent.request('https://sso.tku.edu.tw/NEAI/ImageValidate', {
       method: 'GET',
-      headers: { 'Referer': ssoUrl }
+      headers: { 'Referer': websealFormUrl }
     });
 
     // Then initialize the voice flow
@@ -63,7 +85,7 @@ class TkuSsoFlow {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Referer': ssoUrl,
+        'Referer': websealFormUrl,
         'X-Requested-With': 'XMLHttpRequest'
       },
       body: 'outType=1'
@@ -73,7 +95,7 @@ class TkuSsoFlow {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Referer': ssoUrl,
+        'Referer': websealFormUrl,
         'X-Requested-With': 'XMLHttpRequest'
       },
       body: 'outType=2'
@@ -100,7 +122,7 @@ class TkuSsoFlow {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Referer': ssoUrl
+        'Referer': websealFormUrl
       },
       body: formData.toString()
     });
@@ -118,8 +140,8 @@ class TkuSsoFlow {
         if (scriptMatch) {
           redirectUrl = scriptMatch[1];
         } else {
-          // If no script redirect is found but login succeeded, fallback to myurl
-          redirectUrl = targetUrl; 
+          // If no script redirect is found but login succeeded, we fallback to the hidden myurl
+          redirectUrl = hiddenInputs['myurl'];
         }
       } else {
         throw new Error('TKU SSO rejected credentials. Check your username/password.');
@@ -129,25 +151,46 @@ class TkuSsoFlow {
     }
 
     if (redirectUrl) {
-      this.logger.info(`[TKU-SSO] SSO Login success! Redirecting to: ${redirectUrl}`);
+      // Clean up encoded HTML entities in the URL if any
+      redirectUrl = redirectUrl.replace(/&amp;/g, '&');
+      this.logger.info(`[TKU-SSO] SSO Login success! Following OIDC flow to: ${redirectUrl}`);
       
-      // Follow the redirect manually
-      // TKU's eaido.jsp might bounce us a few times
-      let finalRes = await this.agent.request(redirectUrl);
+      // TKU's WebSEAL eaido.jsp sets the PD-ID cookie and redirects to an arbitrary page
+      await this.agent.request(redirectUrl);
       
-      // If eaido.jsp returns another JS redirect or meta refresh (sometimes happens)
+      this.logger.debug(`[TKU-SSO] Restarting Keycloak OIDC flow with active WebSEAL session...`);
+      // Now that we are authenticated with WebSEAL, fetching the Keycloak URL will pass through
+      // Keycloak will then bounce us to iclass.tku.edu.tw/login?code=...
+      let finalRes = await this.agent.request(keycloakUrl);
+      let loopCount = 0;
+      
+      // Follow the redirect chain (keycloak -> iclass login -> iclass dashboard)
+      while (loopCount < 10 && [301, 302].includes(finalRes.status)) {
+        const loc = finalRes.headers.get('location');
+        this.logger.debug(`[TKU-SSO] Redirect bounce: ${loc}`);
+        if (!loc) break;
+        
+        const nextUrl = loc.startsWith('http') ? loc : `https://iclass.tku.edu.tw${loc}`;
+        finalRes = await this.agent.request(nextUrl);
+        loopCount++;
+      }
+      
+      this.logger.debug(`[TKU-SSO] Final Res status: ${finalRes.status}, URL: ${finalRes.url}`);
+      
+      // If the last step is a JS redirect (sometimes happens on Tronclass)
       if (finalRes.status === 200) {
         const finalHtml = await finalRes.text();
-        const refreshMatch = finalHtml.match(/url='?([^'">]+)'?/i);
+        const refreshMatch = finalHtml.match(/window\.location\.href\s*=\s*['"]([^'"]+)['"]/i) || finalHtml.match(/url='?([^'">]+)'?/i);
         if (refreshMatch) {
-          this.logger.debug(`[TKU-SSO] Following nested redirect to: ${refreshMatch[1]}`);
-          finalRes = await this.agent.request(refreshMatch[1]);
+          const nextUrl = refreshMatch[1].startsWith('http') ? refreshMatch[1] : `https://iclass.tku.edu.tw${refreshMatch[1]}`;
+          this.logger.debug(`[TKU-SSO] Following nested JS redirect to: ${nextUrl}`);
+          finalRes = await this.agent.request(nextUrl);
         }
       }
       
-      // Let's verify if we are now authenticated on Tronclass
+      // Verify if we are now authenticated on Tronclass
       const dashboardRes = await this.agent.request(this.agent.endpoints.dashboard());
-      if (!dashboardRes.url.includes('/login')) {
+      if (dashboardRes.status === 200 && !dashboardRes.url.includes('/login')) {
         this.logger.info('[TKU-SSO] Successfully authenticated to TronClass via SSO.');
         return true;
       }
